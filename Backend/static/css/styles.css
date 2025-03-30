@@ -1,0 +1,105 @@
+body {
+    font-family: 'Arial', sans-serif;
+    background-color: #f4f4f4;
+    color: #333;
+    margin: 0;
+    padding: 0;
+}
+
+header {
+    background: #4c84ff;
+    color: #fff;
+    padding: 10px 0;
+    text-align: center;
+}
+
+h1 {
+    margin: 0;
+    font-size: 2.5rem;
+}
+
+.container {
+    width: 80%;
+    margin: auto;
+    overflow: hidden;
+}
+
+.conversation {
+    background: #fff;
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.message {
+    padding: 10px;
+    margin: 10px 0;
+    border-radius: 5px;
+}
+
+.user {
+    background: #e3f2fd;
+    text-align: right;
+}
+
+.ai {
+    background: #f1f1f1;
+    text-align: left;
+}
+
+.controls {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 20px;
+}
+
+button {
+    padding: 10px 15px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+button:hover {
+    background: #3367d6;
+    color: #fff;
+}
+
+.visualizer-container {
+    height: 150px;
+    background: #000;
+    border-radius: 5px;
+    margin-top: 20px;
+}
+
+.visualizer-label {
+    color: rgba(255, 255, 255, 0.7);
+    text-align: center;
+    padding: 10px;
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    margin-top: 10px;
+}
+
+.status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: #ccc;
+    margin-right: 10px;
+}
+
+.status-dot.active {
+    background-color: #4CAF50;
+}
+
+.status-text {
+    font-size: 0.9em;
+    color: #666;
+}

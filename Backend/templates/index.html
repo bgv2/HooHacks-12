@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSM Conversation Bot</title>
+    <link rel="stylesheet" href="../static/css/styles.css">
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="../static/js/client.js" defer></script>
+</head>
+<body>
+    <header>
+        <h1>CSM Conversation Bot</h1>
+        <p>Talk to the AI and get responses in real-time!</p>
+    </header>
+    <main>
+        <div class="chat-container">
+            <div class="conversation" id="conversation"></div>
+            <input type="text" id="userInput" placeholder="Type your message..." />
+            <button id="sendButton">Send</button>
+        </div>
+        <div class="status-indicator">
+            <div class="status-dot" id="statusDot"></div>
+            <div class="status-text" id="statusText">Not connected</div>
+        </div>
+    </main>
+    <footer>
+        <p>Powered by CSM and Llama 3.2</p>
+    </footer>
+</body>
+</html>

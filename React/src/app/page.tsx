@@ -1,9 +1,6 @@
 "use client";
 import { useState } from "react";
 import { auth0 } from "../lib/auth0";
-import { NextApiRequest, NextApiResponse } from "next";
-
-
 
 
 export default async function Home() {
@@ -89,6 +86,16 @@ export default async function Home() {
 					<button type="button">Add</button>
 					<button className="bg-slate-500 text-yellow-300 text-stretch-50% font-lg rounded-md p-2" type="submit">Set contacts</button>
 				</form>
+				<div>
+					<a href="/call">
+					<button className="bg-emerald-500 text-fuchsia-300 font-semibold font-lg rounded-md p-2">Call</button>
+						</a>
+				</div>
+				<p>
+					<a href="/auth/logout">
+						<button>Log out</button>
+					</a>
+				</p>
 			</div>
 		);
 	}

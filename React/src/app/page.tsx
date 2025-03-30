@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import './styles.css';
 
 export default function Home() {
-	const [contacts, setContacts] = useState<string[]>([]);
+	const [contacts, setContacts] = useState<string[]>([""]);
 	const [codeword, setCodeword] = useState("");
 	const [session, setSession] = useState<any>(null);
 	const [loading, setLoading] = useState(true);
@@ -25,6 +25,16 @@ export default function Home() {
 				setLoading(false);
 			});
 	}, []);
+
+	const handleInputChange = (index: number, value: string) => {
+		const updatedContacts = [...contacts];
+		updatedContacts[index] = value; // Update the specific input value
+		setContacts(updatedContacts);
+	};
+
+	const addContactInput = () => {
+		setContacts([...contacts, ""]); // Add a new empty input
+	};
 
 	function saveToDB() {
 		alert("Saving contacts...");
@@ -144,27 +154,20 @@ export default function Home() {
 					className="space-y-5 flex flex-col gap-[32px] row-start-2 items-center sm:items-start"
 					onSubmit={(e) => e.preventDefault()}
 				>
-					<input
-						type="text"
-						value={contacts}
-						onChange={(e) => setContacts(e.target.value.split(","))}
-						placeholder="Write down an emergency contact"
-						className="border border-gray-300 rounded-md p-2"
-					/>
-
-
-
+					{contacts.map((contact, index) => (
+						<input
+							key={index}
+							type="text"
+							value={contact}
+							onChange={(e) => handleInputChange(index, e.target.value)}
+							placeholder={`Contact ${index + 1}`}
+							className="border border-gray-300 rounded-md p-2"
+						/>
+					))}
 					<button
-						onClick={() => {
-							alert("Adding contact...");
-							let elem = document.getElementsByClassName(
-								"text-input"
-							)[0] as HTMLElement;
-							console.log("Element:", elem);
-							let d = elem.cloneNode(true) as HTMLElement;
-							document.getElementById("Contacts")?.appendChild(d);
-						}}
-						className="bg-emerald-500 text-fuchsia-300"
+						onClick={addContactInput}
+						className="bg-emerald-500 text-white
+						font-semibold font-lg rounded-md p-2"
 						type="button"
 					>
 						Add

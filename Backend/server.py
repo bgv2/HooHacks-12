@@ -112,6 +112,15 @@ def load_models():
             torch_dtype=torch.bfloat16
         )
         models.tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
+        
+        # Configure all special tokens
+        models.tokenizer.pad_token = models.tokenizer.eos_token
+        models.tokenizer.padding_side = "left"  # For causal language modeling
+
+        # Inform the model about the pad token
+        if hasattr(models.llm.config, "pad_token_id") and models.llm.config.pad_token_id is None:
+            models.llm.config.pad_token_id = models.tokenizer.pad_token_id
+        
         logger.info("Llama 3.2 model loaded successfully")
         socketio.emit('model_status', {'model': 'llm', 'status': 'loaded'})
         progress = 100
@@ -392,31 +401,41 @@ def process_audio_and_respond(session_id, data):
             prompt = f"{conversation_history}Assistant: "
             
             # Generate response with Llama
-            input_tokens = models.tokenizer(
-                prompt, 
-                return_tensors="pt",
-                padding=True,
-                return_attention_mask=True
-            )
-            input_ids = input_tokens.input_ids.to(DEVICE)
-            attention_mask = input_tokens.attention_mask.to(DEVICE)
-
-            with torch.no_grad():
-                generated_ids = models.llm.generate(
-                    input_ids,
-                    attention_mask=attention_mask,
-                    max_new_tokens=100,
-                    temperature=0.7,
-                    top_p=0.9,
-                    do_sample=True,
-                    pad_token_id=models.tokenizer.eos_token_id
+            try:
+                # Ensure pad token is set
+                if models.tokenizer.pad_token is None:
+                    models.tokenizer.pad_token = models.tokenizer.eos_token
+                    
+                input_tokens = models.tokenizer(
+                    prompt, 
+                    return_tensors="pt",
+                    padding=True,
+                    return_attention_mask=True
                 )
-            
-            # Decode the response
-            response_text = models.tokenizer.decode(
-                generated_ids[0][input_ids.shape[1]:], 
-                skip_special_tokens=True
-            ).strip()
+                input_ids = input_tokens.input_ids.to(DEVICE)
+                attention_mask = input_tokens.attention_mask.to(DEVICE)
+
+                with torch.no_grad():
+                    generated_ids = models.llm.generate(
+                        input_ids,
+                        attention_mask=attention_mask,
+                        max_new_tokens=100,
+                        temperature=0.7,
+                        top_p=0.9,
+                        do_sample=True,
+                        pad_token_id=models.tokenizer.eos_token_id
+                    )
+                
+                # Decode the response
+                response_text = models.tokenizer.decode(
+                    generated_ids[0][input_ids.shape[1]:], 
+                    skip_special_tokens=True
+                ).strip()
+            except Exception as e:
+                logger.error(f"Error generating response: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                response_text = "I'm sorry, I encountered an error while processing your request."
             
             # Synthesize speech
             with app.app_context():

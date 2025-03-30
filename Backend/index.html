@@ -274,6 +274,32 @@
         input:checked + .slider:before {
             transform: translateX(26px);
         }
+
+        /* Add this style for streaming indicator */
+        .streaming-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            background-color: #3498db;
+            border-radius: 50%;
+            margin-right: 5px;
+            animation: pulse-blue 1.5s infinite;
+        }
+        
+        @keyframes pulse-blue {
+            0% {
+                transform: scale(0.8);
+                opacity: 0.8;
+            }
+            50% {
+                transform: scale(1.2);
+                opacity: 1;
+            }
+            100% {
+                transform: scale(0.8);
+                opacity: 0.8;
+            }
+        }
     </style>
 </head>
 <body>
@@ -330,6 +356,11 @@
         let visualizerActive = true;
         let visualizerAnimationId = null;
         let audioBufferSource = null;
+        
+        // Variables for streaming audio
+        let audioQueue = [];
+        let isPlayingAudio = false;
+        let currentAudioElement = null;
         
         // Initialize audio context
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -399,12 +430,17 @@
         });
         
         socket.on('audio_response', (data) => {
+            // Remove any streaming indicator that might be present
+            const indicator = document.getElementById('current-stream-indicator');
+            if (indicator) indicator.remove();
+            
             // Play audio
             status.textContent = 'Playing response...';
             visualizerLabel.textContent = 'Assistant speaking...';
             
             // Create audio element
             const audio = new Audio('data:audio/wav;base64,' + data.audio);
+            currentAudioElement = audio;
             
             // Visualize assistant audio if visualizer is active
             if (visualizerActive) {
@@ -418,22 +454,27 @@
                     audioBufferSource.disconnect();
                     audioBufferSource = null;
                 }
+                currentAudioElement = null;
             };
             
             audio.onerror = () => {
                 status.textContent = 'Error playing audio';
                 visualizerLabel.textContent = 'Listening...';
                 console.error('Error playing audio response');
+                currentAudioElement = null;
             };
             
             audio.play().catch(err => {
                 status.textContent = 'Error playing audio: ' + err.message;
                 visualizerLabel.textContent = 'Listening...';
                 console.error('Error playing audio:', err);
+                currentAudioElement = null;
             });
             
-            // Display text
-            addMessage('bot', data.text, false);
+            // Display text if not already displayed
+            if (!document.querySelector('.bot-message:last-child')?.textContent.includes(data.text)) {
+                addMessage('bot', data.text, false);
+            }
         });
         
         // Visualize response audio
@@ -769,6 +810,11 @@
             if (visualizerAnimationId) {
                 cancelAnimationFrame(visualizerAnimationId);
             }
+            
+            if (currentAudioElement) {
+                currentAudioElement.pause();
+                currentAudioElement = null;
+            }
         });
         
         // Add a reload button for debugging
@@ -794,6 +840,127 @@
         window.addEventListener('resize', () => {
             setupCanvas();
         });
+
+        // Add new handlers for streaming audio:
+        
+        // Handle start of streaming response
+        socket.on('start_streaming_response', (data) => {
+            // Clear any existing audio queue and setup for new stream
+            audioQueue = [];
+            isPlayingAudio = false;
+            if (currentAudioElement) {
+                currentAudioElement.pause();
+                currentAudioElement = null;
+            }
+            
+            // Display text message first
+            addMessage('bot', data.text, false);
+            
+            // Update status
+            status.textContent = 'Assistant is responding...';
+            visualizerLabel.textContent = 'Streaming response...';
+            
+            // Add a streaming indicator to the message
+            const lastBotMessage = document.querySelector('.bot-message-container:last-child .message');
+            const streamingIndicator = document.createElement('span');
+            streamingIndicator.className = 'streaming-indicator';
+            streamingIndicator.id = 'current-stream-indicator';
+            lastBotMessage.insertAdjacentElement('afterbegin', streamingIndicator);
+            
+            // Request first chunk
+            socket.emit('request_audio_chunk');
+        });
+        
+        // Receive audio chunks
+        socket.on('audio_chunk', (data) => {
+            // Add chunk to queue
+            audioQueue.push(data.audio);
+            
+            // Start playing if not already playing
+            if (!isPlayingAudio) {
+                playNextAudioChunk();
+            }
+            
+            // If not the last chunk, request the next one
+            if (!data.is_last) {
+                socket.emit('request_audio_chunk');
+            }
+        });
+        
+        // Handle wait for chunk message
+        socket.on('wait_for_chunk', () => {
+            console.log('Waiting for more audio chunks...');
+            // Request again after a short delay
+            setTimeout(() => {
+                socket.emit('request_audio_chunk');
+            }, 100);
+        });
+        
+        // Handle end of streaming
+        socket.on('end_streaming', () => {
+            console.log('Audio streaming completed');
+            
+            // Remove streaming indicator
+            const indicator = document.getElementById('current-stream-indicator');
+            if (indicator) indicator.remove();
+            
+            // If no more chunks are playing, update status
+            if (audioQueue.length === 0 && !isPlayingAudio) {
+                status.textContent = 'Ready to record';
+                visualizerLabel.textContent = 'Listening...';
+            }
+        });
+        
+        // Function to play audio chunks in sequence
+        function playNextAudioChunk() {
+            if (audioQueue.length === 0) {
+                isPlayingAudio = false;
+                if (!isRecording) {
+                    status.textContent = 'Ready to record';
+                    visualizerLabel.textContent = 'Listening...';
+                }
+                return;
+            }
+            
+            isPlayingAudio = true;
+            const audioChunk = audioQueue.shift();
+            
+            // Create audio element
+            const audio = new Audio('data:audio/wav;base64,' + audioChunk);
+            currentAudioElement = audio;
+            
+            // Visualize if active
+            if (visualizerActive) {
+                visualizeResponseAudio(audio);
+            }
+            
+            // When this chunk ends, play the next one
+            audio.onended = () => {
+                if (audioBufferSource) {
+                    audioBufferSource.disconnect();
+                    audioBufferSource = null;
+                }
+                
+                // Play next chunk if available
+                currentAudioElement = null;
+                playNextAudioChunk();
+            };
+            
+            // Handle errors
+            audio.onerror = (err) => {
+                console.error('Error playing audio chunk:', err);
+                // Try next chunk
+                currentAudioElement = null;
+                playNextAudioChunk();
+            };
+            
+            // Start playback
+            audio.play().catch(err => {
+                console.error('Error starting audio playback:', err);
+                currentAudioElement = null;
+                playNextAudioChunk();
+            });
+        }
     </script>
 </body>
 </html>

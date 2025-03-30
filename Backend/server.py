@@ -302,6 +302,8 @@ def transcribe_with_whisper(audio_path):
         segment_text = segment.text.strip()
         print(f"[{segment.start:.2f}s -> {segment.end:.2f}s] {segment_text}")
         user_text += segment_text + " "
+
+    print(f"Transcribed text: {user_text.strip()}")
     
     return user_text.strip()
 

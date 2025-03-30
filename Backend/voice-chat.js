@@ -909,9 +909,20 @@ function finalizeStreamingAudio() {
     streamingAudio.audioElement = null;
 }
 
-// Handle model status updates
+// Enhance the handleModelStatusUpdate function:
+
 function handleModelStatusUpdate(data) {
-    const { model, status, message } = data;
+    const { model, status, message, progress } = data;
+    
+    if (model === 'overall' && status === 'loading') {
+        // Update overall loading progress
+        const progressBar = document.getElementById('modelLoadingProgress');
+        if (progressBar) {
+            progressBar.value = progress;
+            progressBar.textContent = `${progress}%`;
+        }
+        return;
+    }
     
     if (status === 'loaded') {
         console.log(`Model ${model} loaded successfully`);

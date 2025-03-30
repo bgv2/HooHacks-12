@@ -59,17 +59,28 @@ class AppModels:
     asr_model = None
     asr_processor = None
 
+# Initialize the models object
+models = AppModels()
+
 def load_models():
     """Load all required models"""
     global models
+    
+    socketio.emit('model_status', {'model': 'overall', 'status': 'loading', 'progress': 0})
     
     logger.info("Loading CSM 1B model...")
     try:
         models.generator = load_csm_1b(device=DEVICE)
         logger.info("CSM 1B model loaded successfully")
         socketio.emit('model_status', {'model': 'csm', 'status': 'loaded'})
+        progress = 33
+        socketio.emit('model_status', {'model': 'overall', 'status': 'loading', 'progress': progress})
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()
     except Exception as e:
-        logger.error(f"Error loading CSM 1B model: {str(e)}")
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"Error loading CSM 1B model: {str(e)}\n{error_details}")
         socketio.emit('model_status', {'model': 'csm', 'status': 'error', 'message': str(e)})
     
     logger.info("Loading Whisper ASR model...")
@@ -85,6 +96,10 @@ def load_models():
         
         logger.info("Whisper ASR model loaded successfully")
         socketio.emit('model_status', {'model': 'asr', 'status': 'loaded'})
+        progress = 66
+        socketio.emit('model_status', {'model': 'overall', 'status': 'loading', 'progress': progress})
+        if DEVICE == "cuda":
+            torch.cuda.empty_cache()
     except Exception as e:
         logger.error(f"Error loading ASR model: {str(e)}")
         socketio.emit('model_status', {'model': 'asr', 'status': 'error', 'message': str(e)})
@@ -99,6 +114,8 @@ def load_models():
         models.tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
         logger.info("Llama 3.2 model loaded successfully")
         socketio.emit('model_status', {'model': 'llm', 'status': 'loaded'})
+        progress = 100
+        socketio.emit('model_status', {'model': 'overall', 'status': 'loaded', 'progress': progress})
     except Exception as e:
         logger.error(f"Error loading Llama 3.2 model: {str(e)}")
         socketio.emit('model_status', {'model': 'llm', 'status': 'error', 'message': str(e)})

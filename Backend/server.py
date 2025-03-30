@@ -105,6 +105,10 @@ class Conversation:
 def index():
     return send_from_directory('.', 'index.html')
 
+@app.route('/voice-chat.js')
+def voice_chat_js():
+    return send_from_directory('.', 'voice-chat.js')
+
 @app.route('/api/health')
 def health_check():
     return jsonify({

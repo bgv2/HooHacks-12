@@ -160,6 +160,10 @@ def favicon():
         return send_from_directory(static_dir, 'favicon.ico')
     return Response(status=204)
 
+@app.route('/voice-chat.js')
+def voice_chat_js():
+    return send_from_directory(base_dir, 'voice-chat.js')
+
 @app.route('/static/<path:path>')
 def serve_static(path):
     return send_from_directory(static_dir, path)

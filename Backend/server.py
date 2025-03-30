@@ -587,7 +587,7 @@ def stream_ai_response(text, session_id):
     
     try:
         # Signal start of AI speech
-        emit('ai_speech_start', room=session_id)
+        socketio.emit('ai_speech_start', room=session_id)  # CHANGED: emit → socketio.emit
         
         # Use the last few conversation segments as context (up to 4)
         context_segments = session['segments'][-4:] if len(session['segments']) > 4 else session['segments']
@@ -643,15 +643,15 @@ def stream_ai_response(text, session_id):
         if session_id in user_sessions:
             session['is_ai_speaking'] = False
             session['is_turn_active'] = False  # End conversation turn
-            socketio.emit('ai_speech_end', room=session_id)
+            socketio.emit('ai_speech_end', room=session_id)  # CHANGED: emit → socketio.emit
     
     except Exception as e:
         print(f"Error streaming AI response: {e}")
         if session_id in user_sessions:
             session['is_ai_speaking'] = False
             session['is_turn_active'] = False
-            socketio.emit('error', {'message': f'Error generating audio: {str(e)}'}, room=session_id)
-            socketio.emit('ai_speech_end', room=session_id)
+            socketio.emit('error', {'message': f'Error generating audio: {str(e)}'}, room=session_id)  # CHANGED: emit → socketio.emit
+            socketio.emit('ai_speech_end', room=session_id)  # CHANGED: emit → socketio.emit
 
 @socketio.on('interrupt_ai')
 def handle_interrupt():

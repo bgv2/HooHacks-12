@@ -574,6 +574,41 @@ function toggleVisualizerVisibility() {
     elements.visualizerCanvas.style.opacity = isVisible ? '1' : '0';
 }
 
+// Add a message to the conversation
+function addMessage(text, type) {
+    if (!elements.conversation) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${type}`;
+    
+    const textElement = document.createElement('p');
+    textElement.textContent = text;
+    messageDiv.appendChild(textElement);
+    
+    elements.conversation.appendChild(messageDiv);
+    
+    // Auto-scroll to the bottom
+    elements.conversation.scrollTop = elements.conversation.scrollHeight;
+    
+    return messageDiv;
+}
+
+// Add a system message to the conversation
+function addSystemMessage(text) {
+    if (!elements.conversation) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message system';
+    messageDiv.textContent = text;
+    
+    elements.conversation.appendChild(messageDiv);
+    
+    // Auto-scroll to the bottom
+    elements.conversation.scrollTop = elements.conversation.scrollHeight;
+    
+    return messageDiv;
+}
+
 // Handle transcription response from server
 function handleTranscription(data) {
     const speaker = data.speaker === 0 ? 'user' : 'ai';

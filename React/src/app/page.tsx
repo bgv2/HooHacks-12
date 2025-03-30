@@ -40,14 +40,29 @@ export default async function Home() {
 					type="submit">Set codeword</button>
 				</form>
 				{/* form for adding contacts */}
-				<form className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start" onSubmit={(e) => e.preventDefault()}>
+				<form className="space-y-5 flex flex-col gap-[32px] row-start-2 items-center sm:items-start" onSubmit={(e) => e.preventDefault()}>
 					<input
 						type="text"
 						value={contacts}
 						onChange={(e) => setContacts(e.target.value.split(","))}
-						placeholder="contacts (comma separated)"
+						placeholder="Write down an emergency contact"
 						className="border border-gray-300 rounded-md p-2"
 					/>
+					<input
+						type="text"
+						value={contacts}
+						onChange={(e) => setContacts(e.target.value.split(","))}
+						placeholder="Write down an emergency contact"
+						className="border border-gray-300 rounded-md p-2"
+					/>
+					<input
+						type="text"
+						value={contacts}
+						onChange={(e) => setContacts(e.target.value.split(","))}
+						placeholder="Write down an emergency contact"
+						className="border border-gray-300 rounded-md p-2"
+					/>
+					<button type="button">Add</button>
 					<button className="bg-slate-500 text-yellow-300 text-stretch-50% font-lg rounded-md p-2" type="submit">Set contacts</button>
 				</form>
 			</div>
@@ -76,14 +91,45 @@ export default async function Home() {
 						type="submit">Set codeword</button>
 					</form>
 					{/* form for adding contacts */}
-					<form className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start" onSubmit={(e) => e.preventDefault()}>
-						<input
-							type="text"
-							value={contacts}
-							onChange={(e) => setContacts(e.target.value.split(","))}
-							placeholder="contacts (comma separated)"
-							className="border border-gray-300 rounded-md p-2"
-						/>
+					<form id="Contacts" className="space-y-5 flex flex-col gap-[32px] row-start-2 items-center sm:items-start" onSubmit={(e) => e.preventDefault()}>
+					<input
+						type="text"
+						value={contacts}
+						onChange={(e) => setContacts(e.target.value.split(","))}
+						placeholder="Write down an emergency contact"
+						className="border border-gray-300 rounded-md p-2"
+					/>
+					<input
+						type="text"
+						value={contacts}
+						onChange={(e) => setContacts(e.target.value.split(","))}
+						placeholder="Write down an emergency contact"
+						className="border border-gray-300 rounded-md p-2"
+					/>
+					<input
+						type="text"
+						value={contacts}
+						onChange={(e) => setContacts(e.target.value.split(","))}
+						placeholder="Write down an emergency contact"
+						className="border border-gray-300 rounded-md p-2"
+					/>
+					<input
+						type="text"
+						value={contacts}
+						onChange={(e) => setContacts(e.target.value.split(","))}
+						placeholder="Write down an emergency contact"
+						className="text-input border border-gray-300 rounded-md p-2"
+					/>
+					<button onClick={() => {
+						alert("Adding contact...");
+						let elem = document.getElementsByClassName("text-input")[0] as HTMLElement;
+						console.log("Element:", elem);
+						let d = elem.cloneNode(true) as HTMLElement;
+						document.getElementById("Contacts")?.appendChild(d);
+					}}
+					className="bg-emerald-500 text-fuchsia-300"
+					type="button">Add</button>
+					
 						<button className="bg-slate-500 text-yellow-300 text-stretch-50% font-lg rounded-md p-2" type="submit">Set contacts</button>
 					</form>
 				

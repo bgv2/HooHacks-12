@@ -21,7 +21,7 @@ const CallPage = () => {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
-				message: `yo i need help`,
+				message: `John Smith needs help.`,
 			}),
 		});
 

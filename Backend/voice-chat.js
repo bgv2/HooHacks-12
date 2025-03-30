@@ -378,25 +378,39 @@ function handleSpeechState(isSilent) {
                     if (state.isSpeaking) {
                         state.isSpeaking = false;
                         
-                        // Get the current audio data and send it
-                        const audioBuffer = new Float32Array(state.audioContext.sampleRate * 5); // 5 seconds max
-                        state.analyser.getFloatTimeDomainData(audioBuffer);
-                        
-                        // Create WAV blob
-                        const wavBlob = createWavBlob(audioBuffer, state.audioContext.sampleRate);
-                        
-                        // Convert to base64
-                        const reader = new FileReader();
-                        reader.onloadend = function() {
-                            sendAudioChunk(reader.result, state.currentSpeaker);
-                        };
-                        reader.readAsDataURL(wavBlob);
-                        
-                        // Update button state
-                        elements.streamButton.classList.add('processing');
-                        elements.streamButton.innerHTML = '<i class="fas fa-cog fa-spin"></i> Processing...';
-                        
-                        addSystemMessage('Processing your message...');
+                        try {
+                            // Get the current audio data and send it
+                            const audioBuffer = new Float32Array(state.audioContext.sampleRate * 5); // 5 seconds max
+                            state.analyser.getFloatTimeDomainData(audioBuffer);
+                            
+                            // Check if audio has content
+                            const hasAudioContent = audioBuffer.some(sample => Math.abs(sample) > 0.01);
+                            
+                            if (!hasAudioContent) {
+                                console.warn('Audio buffer appears to be empty or very quiet');
+                                addSystemMessage('No speech detected. Please try again and speak clearly.');
+                                return;
+                            }
+                            
+                            // Create WAV blob
+                            const wavBlob = createWavBlob(audioBuffer, state.audioContext.sampleRate);
+                            
+                            // Convert to base64
+                            const reader = new FileReader();
+                            reader.onloadend = function() {
+                                sendAudioChunk(reader.result, state.currentSpeaker);
+                            };
+                            reader.readAsDataURL(wavBlob);
+                            
+                            // Update button state
+                            elements.streamButton.classList.add('processing');
+                            elements.streamButton.innerHTML = '<i class="fas fa-cog fa-spin"></i> Processing...';
+                            
+                            addSystemMessage('Processing your message...');
+                        } catch (e) {
+                            console.error('Error recording audio:', e);
+                            addSystemMessage('Error recording audio. Please try again.');
+                        }
                     }
                 }, CLIENT_SILENCE_DURATION_MS);
             }

@@ -118,19 +118,19 @@ export default function Home() {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
   }}
 >
-<div className="space-y-20 flex flex-col items-center sm:items-start">
+<div className="space-y-20 flex flex-col items-center">
   <a href="/auth/login?screen_hint=signup">
-    <button className="p-4 h-16 w-32 mb-10 mt-4 text-xl text-green-400 border-2 border-gray-200 rounded-md transition-opacity duration-1000 opacity-0 animate-fadeIn delay-0">
+    <button className="p-4 h-16 w-32 mb-10 mt-4 text-xl text-green-400 border-2 border-violet-900 rounded-md transition-opacity duration-1000 opacity-0 animate-fadeIn delay-0">
       Sign up
     </button>
   </a>
 
-  <p className="mt-16 animate-fadeIn delay-1 opacity-0">
+  <p className="animate-fadeIn delay-1 opacity-0">
     Already have an account?
   </p>
 
   <a href="/auth/login">
-    <button className="p-4 h-16 w-32 mt-10 text-xl text-green-300 border-2 border-violet-900 rounded-md transition-opacity duration-1000 opacity-0 animate-fadeIn delay-2">
+    <button className="p-4 h-16 w-32 text-xl text-black border-2 border-gray-200 rounded-md transition-opacity duration-1000 opacity-0 animate-fadeIn delay-2">
       Log in
     </button>
   </a>

@@ -18,10 +18,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Ensure the database is connected
     await connectToDatabase();
 
+
     if (req.method === 'POST') {
-      const { codeword, contacts } = req.body;
+      const { email, codeword, contacts } = req.body;
 
       // Perform database operations here
+      
+
       console.log("Codeword:", codeword);
       console.log("Contacts:", contacts);
 

@@ -149,6 +149,11 @@ def index():
     """Serve the main interface"""
     return render_template('index.html')
 
+@app.route('/voice-chat.js')
+def voice_chat_js():
+    """Serve the JavaScript for voice chat"""
+    return app.send_static_file('voice-chat.js')
+
 @socketio.on('connect')
 def handle_connect():
     """Handle new client connection"""

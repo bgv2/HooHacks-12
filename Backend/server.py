@@ -688,4 +688,4 @@ if __name__ == '__main__':
     
     # Start the server
     print("Starting Flask SocketIO server...")
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
+    socketio.run(app, host='0.0.0.0', port=8000, debug=False)

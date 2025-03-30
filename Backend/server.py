@@ -105,6 +105,10 @@ class Conversation:
 def index():
     return send_from_directory('.', 'index.html')
 
+@app.route('/voice-chat.js')
+def voice_chat_js():
+    return send_from_directory('.', 'voice-chat.js')
+
 @app.route('/api/health')
 def health_check():
     return jsonify({
@@ -115,7 +119,7 @@ def health_check():
 
 # Socket event handlers
 @socketio.on('connect')
-def handle_connect():
+def handle_connect(auth=None):
     session_id = request.sid
     logger.info(f"Client connected: {session_id}")
     
@@ -133,9 +137,9 @@ def handle_connect():
     emit('connection_status', {'status': 'connected'})
 
 @socketio.on('disconnect')
-def handle_disconnect():
+def handle_disconnect(reason=None):
     session_id = request.sid
-    logger.info(f"Client disconnected: {session_id}")
+    logger.info(f"Client disconnected: {session_id}. Reason: {reason}")
     
     # Cleanup
     if session_id in active_conversations:

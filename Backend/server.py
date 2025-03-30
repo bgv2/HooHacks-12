@@ -341,10 +341,10 @@ def on_speech_started(session_id):
     # If AI is speaking, we need to interrupt it
     if session['is_ai_speaking']:
         session['should_interrupt_ai'] = True
-        emit('ai_interrupted_by_user', room=session_id)
+        socketio.emit('ai_interrupted_by_user', room=session_id)
     
     # Notify client that we detected speech
-    emit('user_speech_start', room=session_id)
+    socketio.emit('user_speech_start', room=session_id)
 
 def on_speech_ended(session_id):
     """Handle end of user speech segment"""
@@ -399,12 +399,12 @@ def on_speech_ended(session_id):
         ).start()
         
         # Notify client that processing has started
-        emit('processing_speech', room=session_id)
+        socketio.emit('processing_speech', room=session_id)
     
     except Exception as e:
         print(f"Error preparing audio: {e}")
         session['is_processing'] = False
-        emit('error', {'message': f'Error processing audio: {str(e)}'}, room=session_id)
+        socketio.emit('error', {'message': f'Error processing audio: {str(e)}'}, room=session_id)
 
 def process_user_utterance(session_id, audio_path, audio_tensor):
     """Process user utterance, transcribe and generate response"""
@@ -427,7 +427,7 @@ def process_user_utterance(session_id, audio_path, audio_tensor):
         
         # Check if we got meaningful text
         if not user_text or len(user_text.strip()) < 2:
-            emit('no_speech_detected', room=session_id)
+            socketio.emit('no_speech_detected', room=session_id)  # CHANGED: emit → socketio.emit
             session['is_processing'] = False
             return
         
@@ -448,13 +448,13 @@ def process_user_utterance(session_id, audio_path, audio_tensor):
         })
         
         # Send transcription to client
-        emit('transcription', {'text': user_text}, room=session_id)
+        socketio.emit('transcription', {'text': user_text}, room=session_id)  # CHANGED: emit → socketio.emit
         
         # Generate AI response
         ai_response = generate_ai_response(user_text, session_id)
         
         # Send text response to client
-        emit('ai_response_text', {'text': ai_response}, room=session_id)
+        socketio.emit('ai_response_text', {'text': ai_response}, room=session_id)  # CHANGED: emit → socketio.emit
         
         # Update conversation history
         session['conversation_history'].append({
@@ -476,7 +476,7 @@ def process_user_utterance(session_id, audio_path, audio_tensor):
     
     except Exception as e:
         print(f"Error processing utterance: {e}")
-        emit('error', {'message': f'Error: {str(e)}'}, room=session_id)
+        socketio.emit('error', {'message': f'Error: {str(e)}'}, room=session_id)  # CHANGED: emit → socketio.emit
     
     finally:
         # Clear processing flag

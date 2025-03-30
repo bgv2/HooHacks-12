@@ -1,388 +1,445 @@
 /**
- * Sesame AI Voice Chat Application
+ * Sesame AI Voice Chat Client
  * 
- * This script handles the audio streaming, visualization, 
- * and Socket.IO communication for the voice chat application.
+ * A web client that connects to a Sesame AI voice chat server and enables 
+ * real-time voice conversation with an AI assistant.
  */
+
+// Configuration constants
+const SERVER_URL = window.location.hostname === 'localhost' ? 
+    'http://localhost:5000' : window.location.origin;
+const ENERGY_WINDOW_SIZE = 15;
+const CLIENT_SILENCE_DURATION_MS = 750;
+
+// DOM elements
+const elements = {
+    conversation: null,
+    streamButton: null,
+    clearButton: null,
+    thresholdSlider: null,
+    thresholdValue: null,
+    visualizerCanvas: null,
+    visualizerLabel: null,
+    volumeLevel: null,
+    statusDot: null,
+    statusText: null,
+    speakerSelection: null,
+    autoPlayResponses: null,
+    showVisualizer: null
+};
 
 // Application state
 const state = {
     socket: null,
     audioContext: null,
-    streamProcessor: null,
     analyser: null,
     microphone: null,
+    streamProcessor: null,
     isStreaming: false,
     isSpeaking: false,
-    silenceTimer: null,
-    energyWindow: [],
-    currentSpeaker: 0,
     silenceThreshold: 0.01,
-    visualizerAnimationFrame: null,
+    energyWindow: [],
+    silenceTimer: null,
     volumeUpdateInterval: null,
-    connectionAttempts: 0
+    visualizerAnimationFrame: null,
+    currentSpeaker: 0
 };
 
-// Constants
-const ENERGY_WINDOW_SIZE = 10;
-const CLIENT_SILENCE_DURATION_MS = 1000; // 1 second of silence before processing
-const MAX_CONNECTION_ATTEMPTS = 5;
-const RECONNECTION_DELAY_MS = 2000;
-
-// DOM elements
-const elements = {
-    conversation: document.getElementById('conversation'),
-    speakerSelect: document.getElementById('speakerSelect'),
-    streamButton: document.getElementById('streamButton'),
-    clearButton: document.getElementById('clearButton'),
-    statusDot: document.getElementById('statusDot'),
-    statusText: document.getElementById('statusText'),
-    visualizerCanvas: document.getElementById('audioVisualizer'),
-    visualizerLabel: document.getElementById('visualizerLabel'),
-    thresholdSlider: document.getElementById('thresholdSlider'),
-    thresholdValue: document.getElementById('thresholdValue'),
-    volumeLevel: document.getElementById('volumeLevel'),
-    autoPlayResponses: document.getElementById('autoPlayResponses'),
-    showVisualizer: document.getElementById('showVisualizer')
-};
-
-// Visualization variables
-let canvasContext;
-let visualizerBufferLength;
-let visualizerDataArray;
+// Visualizer variables
+let canvasContext = null;
+let visualizerBufferLength = 0;
+let visualizerDataArray = null;
 
 // Initialize the application
 function initializeApp() {
-    // Set up event listeners
-    elements.streamButton.addEventListener('click', toggleStreaming);
-    elements.clearButton.addEventListener('click', clearConversation);
-    elements.thresholdSlider.addEventListener('input', updateThreshold);
-    elements.speakerSelect.addEventListener('change', () => {
-        state.currentSpeaker = parseInt(elements.speakerSelect.value);
-    });
-    elements.showVisualizer.addEventListener('change', toggleVisualizerVisibility);
-
-    // Initialize audio context
-    setupAudioContext();
+    // Initialize the UI elements
+    initializeUIElements();
     
-    // Set up visualization
+    // Initialize socket.io connection
+    setupSocketConnection();
+    
+    // Setup event listeners
+    setupEventListeners();
+    
+    // Initialize visualizer
     setupVisualizer();
     
-    // Connect to Socket.IO server
-    connectToServer();
-
-    // Add welcome message
-    addSystemMessage('Welcome to Sesame AI Voice Chat! Click "Start Conversation" to begin speaking.');
+    // Show welcome message
+    addSystemMessage('Welcome to Sesame AI Voice Chat! Click "Start Conversation" to begin.');
 }
 
-// Connect to Socket.IO server
-function connectToServer() {
-    try {
-        // Use the server URL with or without a specific port
-        const serverUrl = window.location.origin;
+// Initialize UI elements
+function initializeUIElements() {
+    // Main UI containers
+    const chatContainer = document.querySelector('.chat-container');
+    const controlPanel = document.querySelector('.control-panel');
+
+    // Create conversation section
+    chatContainer.innerHTML = `
+        <div class="chat-header">
+            <h2>Conversation</h2>
+            <div class="status-indicator">
+                <div class="status-dot"></div>
+                <span class="status-text">Disconnected</span>
+            </div>
+        </div>
+        <div class="conversation"></div>
+    `;
+
+    // Create control panel
+    controlPanel.innerHTML = `
+        <div class="visualizer-section">
+            <div class="visualizer-container">
+                <canvas id="audioVisualizer"></canvas>
+                <div class="visualizer-label">Speak to see audio visualization</div>
+            </div>
+        </div>
         
-        updateStatus('Connecting...', 'connecting');
-        console.log(`Connecting to Socket.IO server at ${serverUrl}`);
-        
-        state.socket = io(serverUrl, {
-            reconnectionDelay: RECONNECTION_DELAY_MS,
-            reconnectionDelayMax: 5000,
-            reconnectionAttempts: MAX_CONNECTION_ATTEMPTS
-        });
-        
-        setupSocketListeners();
-    } catch (error) {
-        console.error('Error connecting to server:', error);
-        updateStatus('Connection failed. Retrying...', 'error');
-        
-        // Try to reconnect
-        if (state.connectionAttempts < MAX_CONNECTION_ATTEMPTS) {
-            state.connectionAttempts++;
-            setTimeout(connectToServer, RECONNECTION_DELAY_MS);
-        } else {
-            updateStatus('Could not connect to server', 'error');
-            addSystemMessage('Failed to connect to the server. Please check your connection and refresh the page.');
-        }
-    }
+        <div class="controls">
+            <div class="control-group">
+                <div class="control-label">Voice Controls</div>
+                
+                <div class="volume-indicator">
+                    <div class="volume-level" style="width:0%"></div>
+                </div>
+                
+                <div class="slider-container">
+                    <div class="slider-label">
+                        <span>Silence Threshold</span>
+                        <span id="thresholdValue">0.01</span>
+                    </div>
+                    <input type="range" id="thresholdSlider" min="0.001" max="0.05" step="0.001" value="0.01">
+                </div>
+                
+                <select id="speakerSelection">
+                    <option value="0">Speaker 1 (You)</option>
+                    <option value="1">Speaker 2 (Alternative)</option>
+                </select>
+                
+                <div class="button-row">
+                    <button id="streamButton"><i class="fas fa-microphone"></i> Start Conversation</button>
+                    <button id="clearButton"><i class="fas fa-trash"></i> Clear</button>
+                </div>
+            </div>
+            
+            <div class="control-group settings-panel">
+                <div class="control-label">Settings</div>
+                
+                <div class="settings-toggles">
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="autoPlayResponses" checked>
+                        <label for="autoPlayResponses">Auto-play AI responses</label>
+                    </div>
+                    
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="showVisualizer" checked>
+                        <label for="showVisualizer">Show audio visualizer</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Store references to UI elements
+    elements.conversation = document.querySelector('.conversation');
+    elements.streamButton = document.getElementById('streamButton');
+    elements.clearButton = document.getElementById('clearButton');
+    elements.thresholdSlider = document.getElementById('thresholdSlider');
+    elements.thresholdValue = document.getElementById('thresholdValue');
+    elements.visualizerCanvas = document.getElementById('audioVisualizer');
+    elements.visualizerLabel = document.querySelector('.visualizer-label');
+    elements.volumeLevel = document.querySelector('.volume-level');
+    elements.statusDot = document.querySelector('.status-dot');
+    elements.statusText = document.querySelector('.status-text');
+    elements.speakerSelection = document.getElementById('speakerSelection');
+    elements.autoPlayResponses = document.getElementById('autoPlayResponses');
+    elements.showVisualizer = document.getElementById('showVisualizer');
 }
 
-// Set up Socket.IO event listeners
-function setupSocketListeners() {
-    if (!state.socket) return;
+// Setup Socket.IO connection
+function setupSocketConnection() {
+    state.socket = io(SERVER_URL);
     
+    // Connection events
     state.socket.on('connect', () => {
-        console.log('Connected to Socket.IO server');
-        updateStatus('Connected', 'connected');
-        state.connectionAttempts = 0;
-        elements.streamButton.disabled = false;
-        addSystemMessage('Connected to server');
+        console.log('Connected to server');
+        updateConnectionStatus(true);
     });
     
     state.socket.on('disconnect', () => {
-        console.log('Disconnected from Socket.IO server');
-        updateStatus('Disconnected', 'disconnected');
+        console.log('Disconnected from server');
+        updateConnectionStatus(false);
         
         // Stop streaming if active
         if (state.isStreaming) {
-            stopStreaming(false); // false = don't send to server
+            stopStreaming(false);
         }
-        
-        elements.streamButton.disabled = true;
-        addSystemMessage('Disconnected from server. Trying to reconnect...');
-    });
-    
-    state.socket.on('status', (data) => {
-        console.log('Status:', data);
-        addSystemMessage(data.message);
     });
     
     state.socket.on('error', (data) => {
-        console.error('Server error:', data);
+        console.error('Socket error:', data.message);
         addSystemMessage(`Error: ${data.message}`);
     });
     
+    // Register message handlers
     state.socket.on('audio_response', handleAudioResponse);
     state.socket.on('transcription', handleTranscription);
     state.socket.on('context_updated', handleContextUpdate);
     state.socket.on('streaming_status', handleStreamingStatus);
+}
+
+// Setup event listeners
+function setupEventListeners() {
+    // Stream button
+    elements.streamButton.addEventListener('click', toggleStreaming);
     
-    state.socket.on('connect_error', (error) => {
-        console.error('Connection error:', error);
-        updateStatus('Connection Error', 'error');
+    // Clear button
+    elements.clearButton.addEventListener('click', clearConversation);
+    
+    // Threshold slider
+    elements.thresholdSlider.addEventListener('input', updateThreshold);
+    
+    // Speaker selection
+    elements.speakerSelection.addEventListener('change', () => {
+        state.currentSpeaker = parseInt(elements.speakerSelection.value, 10);
     });
-}
-
-// Update the connection status in the UI
-function updateStatus(message, status) {
-    elements.statusText.textContent = message;
-    elements.statusDot.className = 'status-dot';
     
-    if (status === 'connected') {
-        elements.statusDot.classList.add('active');
-    } else if (status === 'connecting') {
-        elements.statusDot.style.backgroundColor = '#FFA500';
-    } else if (status === 'error') {
-        elements.statusDot.style.backgroundColor = '#F44336';
-    }
+    // Visualizer toggle
+    elements.showVisualizer.addEventListener('change', toggleVisualizerVisibility);
 }
 
-// Set up audio context
-function setupAudioContext() {
-    try {
-        state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        console.log('Audio context initialized');
-    } catch (err) {
-        console.error('Error setting up audio context:', err);
-        addSystemMessage(`Audio context error: ${err.message}`);
-        elements.streamButton.disabled = true;
-    }
-}
-
-// Set up audio visualizer
+// Setup audio visualizer
 function setupVisualizer() {
+    if (!elements.visualizerCanvas) return;
+    
     canvasContext = elements.visualizerCanvas.getContext('2d');
     
-    // Set canvas size to match container
-    function resizeCanvas() {
-        const container = elements.visualizerCanvas.parentElement;
-        elements.visualizerCanvas.width = container.clientWidth;
-        elements.visualizerCanvas.height = container.clientHeight;
-    }
+    // Set canvas dimensions
+    elements.visualizerCanvas.width = elements.visualizerCanvas.offsetWidth;
+    elements.visualizerCanvas.height = elements.visualizerCanvas.offsetHeight;
     
-    // Call initially and on window resize
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    
-    // Create placeholder data array
-    visualizerBufferLength = 128;
-    visualizerDataArray = new Uint8Array(visualizerBufferLength);
+    // Initialize the visualizer
+    drawVisualizer();
 }
 
-// Toggle stream on/off
+// Update connection status UI
+function updateConnectionStatus(isConnected) {
+    elements.statusDot.classList.toggle('active', isConnected);
+    elements.statusText.textContent = isConnected ? 'Connected' : 'Disconnected';
+}
+
+// Toggle streaming state
 function toggleStreaming() {
     if (state.isStreaming) {
-        stopStreaming(true); // true = send to server
+        stopStreaming(true);
     } else {
         startStreaming();
     }
 }
 
 // Start streaming audio to the server
-async function startStreaming() {
-    if (!state.socket || !state.socket.connected) {
-        addSystemMessage('Cannot start conversation: Not connected to server');
-        return;
-    }
+function startStreaming() {
+    if (state.isStreaming) return;
     
-    try {
-        // Request microphone access
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
-        // Update state
-        state.isStreaming = true;
-        state.isSpeaking = false;
-        state.energyWindow = [];
-        state.currentSpeaker = parseInt(elements.speakerSelect.value);
-        
-        // Update UI
-        elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Listening...';
-        elements.streamButton.classList.add('recording');
-        elements.visualizerLabel.style.opacity = '0';
-        
-        // Set up audio processing
-        setupAudioProcessing(stream);
-        
-        // Start volume meter updates
-        state.volumeUpdateInterval = setInterval(updateVolumeMeter, 100);
-        
-        addSystemMessage('Listening - speak naturally and pause when finished');
-        
-    } catch (err) {
-        console.error('Error starting audio stream:', err);
-        addSystemMessage(`Microphone error: ${err.message}`);
-        cleanupAudioResources();
-    }
-}
-
-// Set up audio processing pipeline
-function setupAudioProcessing(stream) {
-    // Store microphone stream for later cleanup
-    state.microphone = stream;
-    
-    // Create source from microphone
-    const source = state.audioContext.createMediaStreamSource(stream);
-    
-    // Setup analyzer for visualization
-    state.analyser = state.audioContext.createAnalyser();
-    state.analyser.fftSize = 256;
-    state.analyser.smoothingTimeConstant = 0.8;
-    state.analyser.minDecibels = -90;
-    state.analyser.maxDecibels = -10;
-    
-    visualizerBufferLength = state.analyser.frequencyBinCount;
-    visualizerDataArray = new Uint8Array(visualizerBufferLength);
-    
-    // Connect source to analyzer
-    source.connect(state.analyser);
-    
-    // Start visualization
-    if (state.visualizerAnimationFrame) {
-        cancelAnimationFrame(state.visualizerAnimationFrame);
-    }
-    drawVisualizer();
-    
-    // Setup audio processor
-    state.streamProcessor = state.audioContext.createScriptProcessor(4096, 1, 1);
-    
-    // Connect audio nodes
-    source.connect(state.streamProcessor);
-    state.streamProcessor.connect(state.audioContext.destination);
-    
-    // Process audio
-    state.streamProcessor.onaudioprocess = handleAudioProcess;
-}
-
-// Handle each frame of audio data
-function handleAudioProcess(e) {
-    const audioData = e.inputBuffer.getChannelData(0);
-    
-    // Calculate energy (volume) for silence detection
-    const energy = calculateAudioEnergy(audioData);
-    updateEnergyWindow(energy);
-    
-    // Check if currently silent
-    const avgEnergy = calculateAverageEnergy();
-    const isSilent = avgEnergy < state.silenceThreshold;
-    
-    // Handle silence/speech transitions
-    handleSpeechState(isSilent);
-    
-    // Process and send audio
-    const downsampled = downsampleBuffer(audioData, state.audioContext.sampleRate, 24000);
-    sendAudioChunk(downsampled, state.currentSpeaker);
+    // Request microphone access
+    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        .then(stream => {
+            // Show processing state while setting up
+            elements.streamButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Initializing...';
+            
+            // Create audio context
+            state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // Create microphone source
+            state.microphone = state.audioContext.createMediaStreamSource(stream);
+            
+            // Create analyser for visualizer
+            state.analyser = state.audioContext.createAnalyser();
+            state.analyser.fftSize = 256;
+            visualizerBufferLength = state.analyser.frequencyBinCount;
+            visualizerDataArray = new Uint8Array(visualizerBufferLength);
+            
+            // Connect microphone to analyser
+            state.microphone.connect(state.analyser);
+            
+            // Create script processor for audio processing
+            const bufferSize = 4096;
+            state.streamProcessor = state.audioContext.createScriptProcessor(bufferSize, 1, 1);
+            
+            // Set up audio processing callback
+            state.streamProcessor.onaudioprocess = handleAudioProcess;
+            
+            // Connect the processors
+            state.analyser.connect(state.streamProcessor);
+            state.streamProcessor.connect(state.audioContext.destination);
+            
+            // Update UI
+            state.isStreaming = true;
+            elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Listening...';
+            elements.streamButton.classList.add('recording');
+            
+            // Initialize energy window
+            state.energyWindow = [];
+            
+            // Start volume meter updates
+            state.volumeUpdateInterval = setInterval(updateVolumeMeter, 100);
+            
+            // Start visualizer if enabled
+            if (elements.showVisualizer.checked && !state.visualizerAnimationFrame) {
+                drawVisualizer();
+            }
+            
+            // Show starting message
+            addSystemMessage('Listening... Speak clearly into your microphone.');
+            
+            // Notify the server that we're starting
+            state.socket.emit('stream_audio', {
+                audio: '',
+                speaker: state.currentSpeaker
+            });
+        })
+        .catch(err => {
+            console.error('Error accessing microphone:', err);
+            addSystemMessage(`Error: ${err.message}. Please make sure your microphone is connected and you've granted permission.`);
+            elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Start Conversation';
+        });
 }
 
 // Stop streaming audio
-function stopStreaming(sendToServer = true) {
-    // Cleanup audio resources
-    cleanupAudioResources();
+function stopStreaming(notifyServer = true) {
+    if (!state.isStreaming) return;
     
-    // Reset state
-    state.isStreaming = false;
-    state.isSpeaking = false;
-    state.energyWindow = [];
-    
-    // Update UI
+    // Update UI first
     elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Start Conversation';
-    elements.streamButton.classList.remove('recording', 'processing');
-    elements.streamButton.style.backgroundColor = '';
-    elements.volumeLevel.style.width = '100%';
+    elements.streamButton.classList.remove('recording');
+    elements.streamButton.classList.remove('processing');
     
-    // Clear volume meter updates
+    // Stop volume meter updates
     if (state.volumeUpdateInterval) {
         clearInterval(state.volumeUpdateInterval);
         state.volumeUpdateInterval = null;
     }
     
-    addSystemMessage('Conversation paused');
-    
-    // Notify server
-    if (sendToServer && state.socket && state.socket.connected) {
-        state.socket.emit('stop_streaming', {
-            speaker: state.currentSpeaker
-        });
-    }
-}
-
-// Clean up audio processing resources
-function cleanupAudioResources() {
-    // Stop microphone stream
-    if (state.microphone) {
-        state.microphone.getTracks().forEach(track => track.stop());
-        state.microphone = null;
-    }
-    
-    // Disconnect audio processor
+    // Stop all audio processing
     if (state.streamProcessor) {
         state.streamProcessor.disconnect();
-        state.streamProcessor.onaudioprocess = null;
         state.streamProcessor = null;
     }
     
-    // Disconnect analyzer
     if (state.analyser) {
         state.analyser.disconnect();
-        state.analyser = null;
     }
     
-    // Cancel visualizer animation
+    if (state.microphone) {
+        state.microphone.disconnect();
+    }
+    
+    // Close audio context
+    if (state.audioContext && state.audioContext.state !== 'closed') {
+        state.audioContext.close().catch(err => console.warn('Error closing audio context:', err));
+    }
+    
+    // Cleanup animation frames
     if (state.visualizerAnimationFrame) {
         cancelAnimationFrame(state.visualizerAnimationFrame);
         state.visualizerAnimationFrame = null;
     }
     
-    // Cancel silence timer
+    // Reset state
+    state.isStreaming = false;
+    state.isSpeaking = false;
+    
+    // Notify the server
+    if (notifyServer && state.socket && state.socket.connected) {
+        state.socket.emit('stop_streaming', {
+            speaker: state.currentSpeaker
+        });
+    }
+    
+    // Show message
+    addSystemMessage('Conversation paused. Click "Start Conversation" to resume.');
+}
+
+// Handle audio processing
+function handleAudioProcess(event) {
+    const inputData = event.inputBuffer.getChannelData(0);
+    
+    // Calculate audio energy (volume level)
+    const energy = calculateAudioEnergy(inputData);
+    
+    // Update energy window for averaging
+    updateEnergyWindow(energy);
+    
+    // Calculate average energy
+    const avgEnergy = calculateAverageEnergy();
+    
+    // Determine if audio is silent
+    const isSilent = avgEnergy < state.silenceThreshold;
+    
+    // Handle speech state based on silence
+    handleSpeechState(isSilent);
+    
+    // Only send audio chunk if we detect speech
+    if (!isSilent) {
+        // Create a resampled version at 24kHz for the server
+        // Most WebRTC audio is 48kHz, but we want 24kHz for the model
+        const resampledData = downsampleBuffer(inputData, state.audioContext.sampleRate, 24000);
+        
+        // Send the audio chunk to the server
+        sendAudioChunk(resampledData, state.currentSpeaker);
+    }
+}
+
+// Cleanup audio resources when done
+function cleanupAudioResources() {
+    // Stop all audio processing
+    if (state.streamProcessor) {
+        state.streamProcessor.disconnect();
+        state.streamProcessor = null;
+    }
+    
+    if (state.analyser) {
+        state.analyser.disconnect();
+        state.analyser = null;
+    }
+    
+    if (state.microphone) {
+        state.microphone.disconnect();
+        state.microphone = null;
+    }
+    
+    // Close audio context
+    if (state.audioContext && state.audioContext.state !== 'closed') {
+        state.audioContext.close().catch(err => console.warn('Error closing audio context:', err));
+    }
+    
+    // Cancel all timers and animation frames
+    if (state.volumeUpdateInterval) {
+        clearInterval(state.volumeUpdateInterval);
+        state.volumeUpdateInterval = null;
+    }
+    
+    if (state.visualizerAnimationFrame) {
+        cancelAnimationFrame(state.visualizerAnimationFrame);
+        state.visualizerAnimationFrame = null;
+    }
+    
     if (state.silenceTimer) {
         clearTimeout(state.silenceTimer);
         state.silenceTimer = null;
-    }
-    
-    // Reset visualizer display
-    if (canvasContext) {
-        canvasContext.clearRect(0, 0, elements.visualizerCanvas.width, elements.visualizerCanvas.height);
-        elements.visualizerLabel.style.opacity = '0.7';
     }
 }
 
 // Clear conversation history
 function clearConversation() {
-    // Clear UI
-    elements.conversation.innerHTML = '';
-    addSystemMessage('Conversation cleared');
-    
-    // Notify server
-    if (state.socket && state.socket.connected) {
-        state.socket.emit('clear_context');
+    if (elements.conversation) {
+        elements.conversation.innerHTML = '';
+        addSystemMessage('Conversation cleared.');
+        
+        // Notify server to clear context
+        if (state.socket && state.socket.connected) {
+            state.socket.emit('clear_context');
+        }
     }
 }
 
@@ -390,9 +447,9 @@ function clearConversation() {
 function calculateAudioEnergy(buffer) {
     let sum = 0;
     for (let i = 0; i < buffer.length; i++) {
-        sum += Math.abs(buffer[i]);
+        sum += buffer[i] * buffer[i];
     }
-    return sum / buffer.length;
+    return Math.sqrt(sum / buffer.length);
 }
 
 // Update energy window for averaging
@@ -406,7 +463,9 @@ function updateEnergyWindow(energy) {
 // Calculate average energy from window
 function calculateAverageEnergy() {
     if (state.energyWindow.length === 0) return 0;
-    return state.energyWindow.reduce((sum, val) => sum + val, 0) / state.energyWindow.length;
+    
+    const sum = state.energyWindow.reduce((a, b) => a + b, 0);
+    return sum / state.energyWindow.length;
 }
 
 // Update the threshold from the slider
@@ -417,32 +476,26 @@ function updateThreshold() {
 
 // Update the volume meter display
 function updateVolumeMeter() {
-    if (!state.isStreaming || !state.analyser) return;
+    if (!state.isStreaming || !state.energyWindow.length) return;
     
-    // Get current volume level
-    const dataArray = new Uint8Array(state.analyser.frequencyBinCount);
-    state.analyser.getByteFrequencyData(dataArray);
+    const avgEnergy = calculateAverageEnergy();
     
-    // Calculate average volume
-    let sum = 0;
-    for (let i = 0; i < dataArray.length; i++) {
-        sum += dataArray[i];
-    }
-    const average = sum / dataArray.length;
+    // Scale energy to percentage (0-100)
+    // Typically, energy values will be very small (e.g., 0.001 to 0.1)
+    // So we multiply by a factor to make it more visible
+    const scaleFactor = 1000;
+    const percentage = Math.min(100, Math.max(0, avgEnergy * scaleFactor));
     
-    // Normalize to 0-100%
-    const percentage = Math.min(100, Math.max(0, average / 128 * 100));
-    
-    // Invert because we're showing the "empty" portion
-    elements.volumeLevel.style.width = (100 - percentage) + '%';
+    // Update volume meter width
+    elements.volumeLevel.style.width = `${percentage}%`;
     
     // Change color based on level
     if (percentage > 70) {
-        elements.volumeLevel.style.backgroundColor = 'rgba(244, 67, 54, 0.5)'; // Red
+        elements.volumeLevel.style.backgroundColor = '#ff5252';
     } else if (percentage > 30) {
-        elements.volumeLevel.style.backgroundColor = 'rgba(255, 235, 59, 0.5)'; // Yellow
+        elements.volumeLevel.style.backgroundColor = '#4CAF50';
     } else {
-        elements.volumeLevel.style.backgroundColor = 'rgba(0, 0, 0, 0.5)'; // Dark
+        elements.volumeLevel.style.backgroundColor = '#4c84ff';
     }
 }
 
@@ -452,31 +505,16 @@ function handleSpeechState(isSilent) {
         // Transition from speaking to silence
         if (!state.silenceTimer) {
             state.silenceTimer = setTimeout(() => {
-                // Silence persisted long enough - process the audio
-                elements.streamButton.innerHTML = '<i class="fas fa-cog fa-spin"></i> Processing...';
-                elements.streamButton.classList.remove('recording');
-                elements.streamButton.classList.add('processing');
-                addSystemMessage('Detected pause in speech, processing response...');
+                // Only consider it a real silence after a certain duration
+                // This prevents detecting brief pauses as the end of speech
+                state.isSpeaking = false;
+                state.silenceTimer = null;
             }, CLIENT_SILENCE_DURATION_MS);
         }
-    } else if (!state.isSpeaking && !isSilent) {
-        // Transition from silence to speaking
-        state.isSpeaking = true;
-        elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Listening...';
-        elements.streamButton.classList.add('recording');
-        elements.streamButton.classList.remove('processing');
-        
-        // Clear silence timer
-        if (state.silenceTimer) {
-            clearTimeout(state.silenceTimer);
-            state.silenceTimer = null;
-        }
-    } else if (state.isSpeaking && !isSilent) {
-        // Still speaking, reset silence timer
-        if (state.silenceTimer) {
-            clearTimeout(state.silenceTimer);
-            state.silenceTimer = null;
-        }
+    } else if (state.silenceTimer && !isSilent) {
+        // User started speaking again, cancel the silence timer
+        clearTimeout(state.silenceTimer);
+        state.silenceTimer = null;
     }
     
     // Update speaking state for non-silent audio
@@ -488,7 +526,7 @@ function handleSpeechState(isSilent) {
 // Send audio chunk to server
 function sendAudioChunk(audioData, speaker) {
     if (!state.socket || !state.socket.connected) {
-        console.warn('Cannot send audio: socket not connected');
+        console.warn('Socket not connected');
         return;
     }
     
@@ -498,10 +536,10 @@ function sendAudioChunk(audioData, speaker) {
     reader.onloadend = function() {
         const base64data = reader.result;
         
-        // Send to server using Socket.IO
+        // Send the audio chunk to the server
         state.socket.emit('stream_audio', {
-            speaker: speaker,
-            audio: base64data
+            audio: base64data,
+            speaker: speaker
         });
     };
     
@@ -531,7 +569,7 @@ function drawVisualizer() {
         try {
             state.analyser.getByteFrequencyData(visualizerDataArray);
         } catch (e) {
-            console.error("Error getting frequency data:", e);
+            console.warn('Error getting frequency data:', e);
         }
     } else {
         // Fade out when not streaming

@@ -78,14 +78,16 @@ function CallPage() {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
-				message: `John Smith needs help.`,
+				message: `John Smith needs help. His GPS location is: https://www.google.com/maps/search/?api=1&query=38.03163938795633,-78.51085551716174`,
 			}),
 		});
 
 		if (!response.ok) {
 			console.error("Error sending message:", response.statusText);
 			return;
-		}
+		} else {
+      alert("Emergency message sent successfully.");
+    }
 	}
 
   return (

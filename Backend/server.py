@@ -152,7 +152,10 @@ def index():
     """Serve the main interface"""
     return render_template('index.html')
 
-
+@app.route('/static/js/voice-chat.js')
+def serve_voice_chat_js():
+    """Serve the JavaScript file"""
+    return app.send_static_file('js/voice-chat.js')
 
 @socketio.on('connect')
 def handle_connect():
@@ -180,10 +183,6 @@ def handle_connect():
         'should_interrupt_ai': False,
         'ai_stream_queue': queue.Queue(),
         
-        # WebRTC status
-        'webrtc_connected': False,
-        'webrtc_peer_id': None,
-        
         # Processing flags
         'is_processing': False,
         'pending_user_audio': None
@@ -195,9 +194,10 @@ def handle_connect():
         'csm_available': csm_generator is not None,
         'llm_available': llm_model is not None,
         'client_sample_rate': CLIENT_SAMPLE_RATE,
-        'server_sample_rate': getattr(csm_generator, 'sample_rate', 24000) if csm_generator else 24000,
-        'ice_servers': ICE_SERVERS
+        'server_sample_rate': getattr(csm_generator, 'sample_rate', 24000) if csm_generator else 24000
     })
+    
+    emit('ready_for_speech', {'message': 'Ready to start conversation'})
 
 @socketio.on('disconnect')
 def handle_disconnect():

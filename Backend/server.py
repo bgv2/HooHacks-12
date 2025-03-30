@@ -13,11 +13,6 @@ import requests
 import huggingface_hub
 from generator import load_csm_1b, Segment
 
-# Force CPU mode regardless of what's available
-# This bypasses the CUDA/cuDNN library requirements
-os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Hide all CUDA devices
-torch.backends.cudnn.enabled = False  # Disable cuDNN
-
 # Configure environment with longer timeouts
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "600"  # 10 minutes timeout for downloads
 requests.adapters.DEFAULT_TIMEOUT = 60  # Increase default requests timeout
@@ -29,10 +24,55 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Force CPU regardless of what hardware is available
-device = "cuda" if torch.cuda.is_available() else "cpu"
-whisper_compute_type = "int8"
-print(f"Forcing CPU mode for all models")
+# Explicitly check for CUDA and print more detailed info
+print("\n=== CUDA Information ===")
+if torch.cuda.is_available():
+    print(f"CUDA is available")
+    print(f"CUDA version: {torch.version.cuda}")
+    print(f"Number of GPUs: {torch.cuda.device_count()}")
+    for i in range(torch.cuda.device_count()):
+        print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+else:
+    print("CUDA is not available")
+
+# Check for cuDNN
+try:
+    import ctypes
+    ctypes.CDLL("libcudnn_ops_infer.so.8")
+    print("cuDNN is available")
+except:
+    print("cuDNN is not available (libcudnn_ops_infer.so.8 not found)")
+
+# Check for other compute platforms
+if torch.backends.mps.is_available():
+    print("MPS (Apple Silicon) is available")
+else:
+    print("MPS is not available")
+print("========================\n")
+
+# Check for CUDA availability and handle potential CUDA/cuDNN issues
+try:
+    if torch.cuda.is_available():
+        # Try to initialize CUDA to check if libraries are properly loaded
+        _ = torch.zeros(1).cuda()
+        device = "cuda"
+        whisper_compute_type = "float16"
+        print("🟢 CUDA is available and initialized successfully")
+    elif torch.backends.mps.is_available():
+        device = "mps"
+        whisper_compute_type = "float32"
+        print("🟢 MPS is available (Apple Silicon)")
+    else:
+        device = "cpu"
+        whisper_compute_type = "int8"
+        print("🟡 Using CPU (CUDA/MPS not available)")
+except Exception as e:
+    print(f"🔴 Error initializing CUDA: {e}")
+    print("🔴 Falling back to CPU")
+    device = "cpu"
+    whisper_compute_type = "int8"
+    
+print(f"Using device: {device}")
 
 # Initialize models with proper error handling
 whisper_model = None
@@ -45,10 +85,10 @@ def load_models():
     
     # Initialize Faster-Whisper for transcription
     try:
-        print("Loading Whisper model on CPU...")
+        print("Loading Whisper model...")
         # Import here to avoid immediate import errors if package is missing
         from faster_whisper import WhisperModel
-        whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8", download_root="./models/whisper")
+        whisper_model = WhisperModel("base", device=device, compute_type=whisper_compute_type, download_root="./models/whisper")
         print("Whisper model loaded successfully")
     except Exception as e:
         print(f"Error loading Whisper model: {e}")
@@ -56,8 +96,8 @@ def load_models():
     
     # Initialize CSM model for audio generation
     try:
-        print("Loading CSM model on CPU...")
-        csm_generator = load_csm_1b(device="cpu")
+        print("Loading CSM model...")
+        csm_generator = load_csm_1b(device=device)
         print("CSM model loaded successfully")
     except Exception as e:
         print(f"Error loading CSM model: {e}")
@@ -65,13 +105,15 @@ def load_models():
     
     # Initialize Llama 3.2 model for response generation
     try:
-        print("Loading Llama 3.2 model on CPU...")
+        print("Loading Llama 3.2 model...")
         llm_model_id = "meta-llama/Llama-3.2-1B"  # Choose appropriate size based on resources
         llm_tokenizer = AutoTokenizer.from_pretrained(llm_model_id, cache_dir="./models/llama")
+        # Use the right data type based on device
+        dtype = torch.bfloat16 if device != "cpu" else torch.float32
         llm_model = AutoModelForCausalLM.from_pretrained(
             llm_model_id,
-            torch_dtype=torch.float32,  # Use float32 on CPU
-            device_map="cpu",
+            torch_dtype=dtype,
+            device_map=device,
             cache_dir="./models/llama",
             low_cpu_mem_usage=True
         )
@@ -358,8 +400,7 @@ if __name__ == '__main__':
         os.rename('index.html', 'templates/index.html')
     
     # Load models asynchronously before starting the server
-    print("Starting CPU-only model loading...")
-    # In a production environment, you could load models in a separate thread
+    print("Starting model loading...")
     load_models()
     
     # Start the server

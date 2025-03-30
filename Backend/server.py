@@ -71,13 +71,15 @@ def load_models():
     
     logger.info("Loading ASR pipeline...")
     try:
+        # Initialize the pipeline without the language parameter in the constructor
         models.asr = pipeline(
             "automatic-speech-recognition", 
             model="openai/whisper-small",
-            device=DEVICE,
-            language="en",  # Force English language
-            return_attention_mask=True  # Add attention mask
+            device=DEVICE
         )
+        
+        # Configure the model with the appropriate options
+        # Note that for whisper, language should be set during inference, not initialization
         logger.info("ASR pipeline loaded successfully")
         socketio.emit('model_status', {'model': 'asr', 'status': 'loaded'})
     except Exception as e:
@@ -312,7 +314,8 @@ def process_audio_and_respond(session_id, data):
             # Use the ASR pipeline to transcribe
             transcription_result = models.asr(
                 {"array": waveform.squeeze().cpu().numpy(), "sampling_rate": models.generator.sample_rate},
-                return_timestamps=False
+                return_timestamps=False,
+                generate_kwargs={"language": "en"}  # Set language during inference
             )
             user_text = transcription_result['text'].strip()
             

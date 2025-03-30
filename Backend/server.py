@@ -75,32 +75,51 @@ except Exception as model_error:
         # Already tried CPU and it failed
         raise RuntimeError("Failed to load speech synthesis model on any device")
 
+# Replace the WhisperX model loading section
+
 # Initialize WhisperX for ASR with robust error handling
 print("Loading WhisperX model...")
+asr_model = None  # Initialize to None first to avoid scope issues
+
 try:
-    # First try the smallest model ("tiny") to avoid memory issues
-    asr_model = whisperx.load_model("tiny", device, compute_type=compute_type)
-    print("WhisperX 'tiny' model loaded successfully")
+    # Always start with the tiny model on CPU for stability
+    asr_model = whisperx.load_model("tiny", "cpu", compute_type="int8")
+    print("WhisperX 'tiny' model loaded on CPU successfully")
     
-    # If tiny worked and we have CUDA, try upgrading to small
+    # If CPU works, try CUDA if available
     if device == "cuda":
         try:
-            asr_model = whisperx.load_model("small", device, compute_type=compute_type)
-            print("WhisperX 'small' model loaded successfully")
-        except Exception as upgrade_error:
-            print(f"Staying with 'tiny' model: {str(upgrade_error)}")
+            print("Trying to load WhisperX on CUDA...")
+            cuda_model = whisperx.load_model("tiny", "cuda", compute_type="float16")
+            # Test the model to ensure it works
+            test_audio = torch.zeros(16000)  # 1 second of silence at 16kHz
+            _ = cuda_model.transcribe(test_audio.numpy(), batch_size=1)
+            # If we get here, CUDA works
+            asr_model = cuda_model
+            print("WhisperX model moved to CUDA successfully")
+            
+            # Try to upgrade to small model on CUDA
+            try:
+                small_model = whisperx.load_model("small", "cuda", compute_type="float16")
+                # Test it
+                _ = small_model.transcribe(test_audio.numpy(), batch_size=1)
+                asr_model = small_model
+                print("WhisperX 'small' model loaded on CUDA successfully")
+            except Exception as upgrade_error:
+                print(f"Staying with 'tiny' model on CUDA: {str(upgrade_error)}")
+        except Exception as cuda_error:
+            print(f"CUDA loading failed, staying with CPU model: {str(cuda_error)}")
 except Exception as e:
-    print(f"Error loading models on {device}: {str(e)}")
-    print("Falling back to CPU model")
-    try:
-        # Force CPU as last resort
-        device = "cpu"
-        compute_type = "int8"
-        asr_model = whisperx.load_model("tiny", "cpu", compute_type="int8")
-        print("WhisperX loaded on CPU as last resort")
-    except Exception as cpu_error:
-        print(f"Fatal error - could not load any model: {str(cpu_error)}")
-        raise RuntimeError("No ASR model could be loaded. Please check your CUDA installation.")
+    print(f"Error loading WhisperX model: {str(e)}")
+    # Create a minimal dummy model as last resort
+    class DummyModel:
+        def __init__(self):
+            self.device = "cpu"
+        def transcribe(self, *args, **kwargs):
+            return {"segments": [{"text": "Speech recognition currently unavailable."}]}
+    
+    asr_model = DummyModel()
+    print("WARNING: Using dummy transcription model - ASR functionality limited")
 
 # Silence detection parameters
 SILENCE_THRESHOLD = 0.01  # Adjust based on your audio normalization
@@ -262,6 +281,8 @@ def encode_audio_data(audio_tensor: torch.Tensor) -> str:
 
 def transcribe_audio(audio_tensor: torch.Tensor) -> str:
     """Transcribe audio using WhisperX with robust error handling"""
+    global asr_model  # Declare global at the beginning of the function
+    
     try:
         # Save the tensor to a temporary file
         temp_path = os.path.join(base_dir, "temp_audio.wav")
@@ -291,7 +312,6 @@ def transcribe_audio(audio_tensor: torch.Tensor) -> str:
                 
                 # Try to load a CPU model as fallback
                 try:
-                    global asr_model
                     # Move model to CPU and try again
                     asr_model = whisperx.load_model("tiny", "cpu", compute_type="int8")
                     result = asr_model.transcribe(audio, batch_size=1)

@@ -10,6 +10,24 @@ export default async function Home() {
 
 	console.log("Session:", session?.user);
 
+	const handleEmergency = async () => {
+		// send texts
+		const response = await fetch("/api/sendMessage", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				message: `yo i need help`,
+			}),
+		});
+
+		if (!response.ok) {
+			console.error("Error sending message:", response.statusText);
+			return;
+		}
+	}
+
 	// If no session, show sign-up and login buttons
 	if (!session) {	
 

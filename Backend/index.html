@@ -3,490 +3,454 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sesame AI Voice Chat</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Socket.IO client library -->
+    <title>Voice Assistant - CSM & Whisper</title>
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
     <style>
-        :root {
-            --primary-color: #4c84ff;
-            --secondary-color: #3367d6;
-            --text-color: #333;
-            --background-color: #f9f9f9;
-            --card-background: #ffffff;
-            --accent-color: #ff5252;
-            --success-color: #4CAF50;
-            --border-color: #e0e0e0;
-            --shadow-color: rgba(0, 0, 0, 0.1);
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--background-color);
-            color: var(--text-color);
-            line-height: 1.6;
-            max-width: 1000px;
+            max-width: 800px;
             margin: 0 auto;
             padding: 20px;
-            transition: all 0.3s ease;
+            background-color: #f5f7fa;
+            color: #333;
         }
-
-        header {
+        
+        h1 {
+            color: #2c3e50;
             text-align: center;
             margin-bottom: 30px;
         }
-
-        h1 {
-            color: var(--primary-color);
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-        }
-
-        .subtitle {
-            color: #666;
-            font-weight: 300;
-        }
-
-        .app-container {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 20px;
-        }
-
-        @media (min-width: 768px) {
-            .app-container {
-                grid-template-columns: 1fr 1fr;
-            }
-        }
-
-        .chat-container, .control-panel {
-            background-color: var(--card-background);
-            border-radius: 12px;
-            box-shadow: 0 4px 12px var(--shadow-color);
+        
+        #conversation {
+            height: 400px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
             padding: 20px;
+            margin-bottom: 20px;
+            overflow-y: auto;
+            background-color: white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }
-
-        .control-panel {
+        
+        .message-container {
             display: flex;
             flex-direction: column;
-            gap: 20px;
-        }
-
-        .chat-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
             margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid var(--border-color);
         }
-
-        .conversation {
-            height: 400px;
-            overflow-y: auto;
-            padding: 10px;
-            border-radius: 8px;
-            background-color: #f7f9fc;
-            margin-bottom: 20px;
-            scroll-behavior: smooth;
+        
+        .user-message-container {
+            align-items: flex-end;
         }
-
+        
+        .bot-message-container {
+            align-items: flex-start;
+        }
+        
         .message {
-            margin-bottom: 15px;
-            padding: 12px 15px;
-            border-radius: 12px;
-            max-width: 85%;
+            max-width: 80%;
+            padding: 12px;
+            border-radius: 18px;
             position: relative;
-            animation: fade-in 0.3s ease-out forwards;
+            word-break: break-word;
         }
-
-        @keyframes fade-in {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .user {
-            background-color: #e3f2fd;
-            color: #0d47a1;
-            margin-left: auto;
+        
+        .user-message {
+            background-color: #dcf8c6;
+            color: #000;
             border-bottom-right-radius: 4px;
         }
-
-        .ai {
-            background-color: #f1f1f1;
-            color: #37474f;
-            margin-right: auto;
+        
+        .bot-message {
+            background-color: #f1f0f0;
+            color: #000;
             border-bottom-left-radius: 4px;
         }
-
-        .system {
-            background-color: #f8f9fa;
-            font-style: italic;
-            color: #666;
-            text-align: center;
-            max-width: 90%;
-            margin: 10px auto;
-            font-size: 0.9em;
-            padding: 8px 12px;
-            border-radius: 8px;
+        
+        .message-label {
+            font-size: 0.8em;
+            margin-bottom: 4px;
+            color: #657786;
         }
-
-        .message-time {
-            font-size: 0.7em;
-            color: #999;
-            position: absolute;
-            bottom: 5px;
-            right: 10px;
-        }
-
-        .audio-player {
-            width: 100%;
-            margin-top: 8px;
-            border-radius: 8px;
-        }
-
-        .visualizer-section {
-            margin-bottom: 20px;
-        }
-
-        .visualizer-container {
-            height: 150px;
-            background-color: #000;
-            border-radius: 12px;
-            overflow: hidden;
-            position: relative;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-        }
-
-        .visualizer-label {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 1rem;
-            text-align: center;
-            pointer-events: none;
-            transition: opacity 0.3s ease;
-            z-index: 1;
-        }
-
-        #audioVisualizer {
-            width: 100%;
-            height: 100%;
-            display: block;
-        }
-
-        .controls {
-            display: flex;
-            gap: 15px;
-            flex-wrap: wrap;
-        }
-
-        .control-group {
-            flex: 1;
-            min-width: 200px;
-        }
-
-        .control-label {
-            font-weight: 600;
-            margin-bottom: 10px;
-            color: #555;
-        }
-
-        .button-row {
+        
+        #controls {
             display: flex;
             gap: 10px;
-            margin-top: 15px;
-        }
-
-        button {
-            padding: 12px 20px;
-            border-radius: 8px;
-            border: none;
-            background-color: var(--primary-color);
-            color: white;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
             justify-content: center;
-            gap: 8px;
-            flex: 1;
-        }
-
-        button:hover {
-            background-color: var(--secondary-color);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        }
-
-        button:active {
-            transform: translateY(0);
-        }
-
-        button.recording {
-            background-color: var(--accent-color);
-            animation: pulse 1.5s infinite;
-        }
-
-        button.processing {
-            background-color: #ff9800;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.8; }
-            100% { opacity: 1; }
-        }
-
-        select, .slider-container {
-            width: 100%;
-            padding: 10px;
-            border-radius: 8px;
-            border: 1px solid var(--border-color);
-            background-color: white;
             margin-bottom: 15px;
         }
-
-        .slider-container {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-
-        .slider-label {
-            display: flex;
-            justify-content: space-between;
-        }
-
-        input[type="range"] {
-            width: 100%;
+        
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
             cursor: pointer;
+            border-radius: 50px;
+            border: none;
+            outline: none;
+            transition: all 0.3s ease;
         }
-
-        .volume-indicator {
-            height: 30px;
-            background: linear-gradient(to right, #4CAF50, #FFEB3B, #F44336);
-            border-radius: 4px;
-            margin-top: 5px;
-            position: relative;
-            overflow: hidden;
+        
+        #recordButton {
+            background-color: #4CAF50;
+            color: white;
+            width: 200px;
+            box-shadow: 0 4px 8px rgba(76, 175, 80, 0.3);
         }
-
-        .volume-level {
-            height: 100%;
-            width: 0%;
-            background-color: rgba(0, 0, 0, 0.5);
-            position: absolute;
-            right: 0;
-            top: 0;
-            transition: width 0.1s ease;
+        
+        #recordButton:hover {
+            background-color: #45a049;
+            transform: translateY(-2px);
         }
-
-        .status-indicator {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 10px;
-            border-radius: 8px;
-            background-color: #f5f5f5;
-            margin-top: 20px;
+        
+        #recordButton.recording {
+            background-color: #f44336;
+            animation: pulse 1.5s infinite;
+            box-shadow: 0 4px 8px rgba(244, 67, 54, 0.3);
         }
-
-        .status-dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background-color: #ccc;
-            transition: background-color 0.3s ease;
+        
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.05);
+            }
+            100% {
+                transform: scale(1);
+            }
         }
-
-        .status-dot.active {
-            background-color: var(--success-color);
-        }
-
-        .status-text {
-            font-size: 0.9em;
-            color: #666;
-        }
-
-        /* Custom Scrollbar */
-        .conversation::-webkit-scrollbar {
-            width: 8px;
-        }
-
-        .conversation::-webkit-scrollbar-track {
-            background: #f1f1f1;
-            border-radius: 10px;
-        }
-
-        .conversation::-webkit-scrollbar-thumb {
-            background: #ccc;
-            border-radius: 10px;
-        }
-
-        .conversation::-webkit-scrollbar-thumb:hover {
-            background: #aaa;
-        }
-
-        /* Settings Panel */
-        .settings-panel {
-            margin-top: 20px;
-        }
-
-        .settings-toggles {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-            gap: 10px;
-            margin-top: 10px;
-        }
-
-        .toggle-switch {
-            display: flex;
-            align-items: center;
-        }
-
-        .toggle-switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-
-        .toggle-switch label {
-            position: relative;
-            display: inline-block;
-            width: 50px;
-            height: 24px;
-            background-color: #ccc;
-            border-radius: 34px;
-            transition: .4s;
-            margin-right: 10px;
-            cursor: pointer;
-        }
-
-        .toggle-switch label:before {
-            position: absolute;
-            content: "";
-            height: 16px;
-            width: 16px;
-            left: 4px;
-            bottom: 4px;
-            background-color: white;
-            transition: .4s;
-            border-radius: 50%;
-        }
-
-        .toggle-switch input:checked + label {
-            background-color: var(--primary-color);
-        }
-
-        .toggle-switch input:checked + label:before {
-            transform: translateX(26px);
-        }
-
-        footer {
+        
+        #status {
             text-align: center;
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 1px solid var(--border-color);
+            margin-top: 15px;
+            font-style: italic;
+            color: #657786;
+        }
+        
+        .audio-wave {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 40px;
+            gap: 3px;
+        }
+        
+        .audio-wave span {
+            display: block;
+            width: 3px;
+            height: 100%;
+            background-color: #4CAF50;
+            animation: wave 1.5s infinite ease-in-out;
+            border-radius: 6px;
+        }
+        
+        .audio-wave span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        .audio-wave span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        .audio-wave span:nth-child(4) {
+            animation-delay: 0.6s;
+        }
+        .audio-wave span:nth-child(5) {
+            animation-delay: 0.8s;
+        }
+        
+        @keyframes wave {
+            0%, 100% {
+                height: 8px;
+            }
+            50% {
+                height: 30px;
+            }
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .transcription-info {
+            font-size: 0.8em;
             color: #888;
-            font-size: 0.9em;
+            margin-top: 4px;
+            text-align: right;
         }
     </style>
 </head>
 <body>
-    <header>
-        <h1>Sesame AI Voice Chat</h1>
-        <p class="subtitle">Speak naturally and have a conversation with AI</p>
-    </header>
-
-    <div class="app-container">
-        <div class="chat-container">
-            <div class="chat-header">
-                <h2>Conversation</h2>
-                <button id="clearButton" class="small-button">
-                    <i class="fas fa-trash"></i> Clear Chat
-                </button>
-            </div>
-            <div class="conversation" id="conversation"></div>
-        </div>
-
-        <div class="control-panel">
-            <div class="visualizer-section">
-                <h3>Audio Visualizer</h3>
-                <div class="visualizer-container">
-                    <canvas id="audioVisualizer"></canvas>
-                    <div id="visualizerLabel" class="visualizer-label">Speak to see audio visualization</div>
-                </div>
-            </div>
-
-            <div class="controls">
-                <div class="control-group">
-                    <div class="control-label">Voice Settings</div>
-                    <select id="speakerSelect">
-                        <option value="0">Speaker 0 (You)</option>
-                        <option value="1">Speaker 1 (AI)</option>
-                    </select>
-                    
-                    <div class="slider-container">
-                        <div class="slider-label">
-                            <span>Silence Threshold</span>
-                            <span id="thresholdValue">0.01</span>
-                        </div>
-                        <input type="range" id="thresholdSlider" min="0.001" max="0.1" step="0.001" value="0.01">
-                    </div>
-                    
-                    <div class="volume-indicator">
-                        <div id="volumeLevel" class="volume-level"></div>
-                    </div>
-                </div>
-
-                <div class="control-group">
-                    <div class="control-label">Conversation Controls</div>
-                    <div class="button-row">
-                        <button id="streamButton" class="main-button">
-                            <i class="fas fa-microphone"></i> Start Conversation
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <div class="settings-panel">
-                <div class="control-label">Settings</div>
-                <div class="settings-toggles">
-                    <div class="toggle-switch">
-                        <input type="checkbox" id="autoPlayResponses" checked>
-                        <label for="autoPlayResponses"></label>
-                        <span>Auto-play responses</span>
-                    </div>
-                    <div class="toggle-switch">
-                        <input type="checkbox" id="showVisualizer" checked>
-                        <label for="showVisualizer"></label>
-                        <span>Show visualizer</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="status-indicator">
-                <div class="status-dot" id="statusDot"></div>
-                <div class="status-text" id="statusText">Not connected</div>
-            </div>
-        </div>
+    <h1>Voice Assistant with CSM & Whisper</h1>
+    <div id="conversation"></div>
+    
+    <div id="controls">
+        <button id="recordButton">Hold to Speak</button>
     </div>
+    
+    <div id="audioWave" class="audio-wave hidden">
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+        <span></span>
+    </div>
+    
+    <div id="status">Connecting to server...</div>
 
-    <footer>
-        <p>Powered by Sesame AI | WhisperX for speech recognition</p>
-    </footer>
-
-    <!-- Load our JavaScript file -->
-    <script src="./voice-chat.js"></script>
+    <script>
+        const socket = io();
+        const recordButton = document.getElementById('recordButton');
+        const conversation = document.getElementById('conversation');
+        const status = document.getElementById('status');
+        const audioWave = document.getElementById('audioWave');
+        
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        let audioSendInterval;
+        let sessionActive = false;
+        
+        // Initialize audio context
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Connect to server
+        socket.on('connect', () => {
+            status.textContent = 'Connected to server';
+            sessionActive = true;
+        });
+        
+        socket.on('disconnect', () => {
+            status.textContent = 'Disconnected from server';
+            sessionActive = false;
+        });
+        
+        socket.on('ready', (data) => {
+            status.textContent = data.message;
+            setupAudioRecording();
+        });
+        
+        socket.on('transcription', (data) => {
+            addMessage('user', data.text);
+            status.textContent = 'Assistant is thinking...';
+        });
+        
+        socket.on('audio_response', (data) => {
+            // Play audio
+            status.textContent = 'Playing response...';
+            const audio = new Audio('data:audio/wav;base64,' + data.audio);
+            
+            audio.onended = () => {
+                status.textContent = 'Ready to record';
+            };
+            
+            audio.onerror = () => {
+                status.textContent = 'Error playing audio';
+                console.error('Error playing audio response');
+            };
+            
+            audio.play().catch(err => {
+                status.textContent = 'Error playing audio: ' + err.message;
+                console.error('Error playing audio:', err);
+            });
+            
+            // Display text
+            addMessage('bot', data.text);
+        });
+        
+        socket.on('error', (data) => {
+            status.textContent = 'Error: ' + data.message;
+            console.error('Server error:', data.message);
+        });
+        
+        function setupAudioRecording() {
+            // Check if browser supports required APIs
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                status.textContent = 'Your browser does not support audio recording';
+                return;
+            }
+            
+            // Get user media
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    // Setup recording with better audio quality
+                    const options = { 
+                        mimeType: 'audio/webm',
+                        audioBitsPerSecond: 128000 
+                    };
+                    
+                    try {
+                        mediaRecorder = new MediaRecorder(stream, options);
+                    } catch (e) {
+                        // Fallback if the specified options aren't supported
+                        mediaRecorder = new MediaRecorder(stream);
+                    }
+                    
+                    mediaRecorder.ondataavailable = event => {
+                        if (event.data.size > 0) {
+                            audioChunks.push(event.data);
+                        }
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        processRecording();
+                    };
+                    
+                    // Create audio analyzer for visualization
+                    const source = audioContext.createMediaStreamSource(stream);
+                    const analyzer = audioContext.createAnalyser();
+                    analyzer.fftSize = 2048;
+                    source.connect(analyzer);
+                    
+                    // Setup button handlers with better touch handling
+                    recordButton.addEventListener('mousedown', startRecording);
+                    recordButton.addEventListener('touchstart', (e) => {
+                        e.preventDefault(); // Prevent default touch behavior
+                        startRecording();
+                    });
+                    
+                    recordButton.addEventListener('mouseup', stopRecording);
+                    recordButton.addEventListener('touchend', (e) => {
+                        e.preventDefault();
+                        stopRecording();
+                    });
+                    
+                    recordButton.addEventListener('mouseleave', stopRecording);
+                    
+                    status.textContent = 'Ready to record';
+                })
+                .catch(err => {
+                    status.textContent = 'Error accessing microphone: ' + err.message;
+                    console.error('Error accessing microphone:', err);
+                });
+        }
+        
+        function startRecording() {
+            if (!isRecording && sessionActive) {
+                audioChunks = [];
+                mediaRecorder.start(100); // Collect data in 100ms chunks
+                recordButton.classList.add('recording');
+                recordButton.textContent = 'Release to Stop';
+                status.textContent = 'Recording...';
+                audioWave.classList.remove('hidden');
+                isRecording = true;
+                
+                socket.emit('start_speaking');
+                
+                // Start sending audio chunks periodically
+                audioSendInterval = setInterval(() => {
+                    if (mediaRecorder.state === 'recording') {
+                        mediaRecorder.requestData(); // Force ondataavailable to fire
+                    }
+                }, 300); // Send every 300ms
+            }
+        }
+        
+        function stopRecording() {
+            if (isRecording) {
+                clearInterval(audioSendInterval);
+                mediaRecorder.stop();
+                recordButton.classList.remove('recording');
+                recordButton.textContent = 'Hold to Speak';
+                status.textContent = 'Processing speech...';
+                audioWave.classList.add('hidden');
+                isRecording = false;
+            }
+        }
+        
+        function processRecording() {
+            if (audioChunks.length === 0) {
+                status.textContent = 'No audio recorded';
+                return;
+            }
+            
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            
+            // Convert to ArrayBuffer for processing
+            const fileReader = new FileReader();
+            fileReader.onloadend = () => {
+                try {
+                    const arrayBuffer = fileReader.result;
+                    // Convert to Float32Array - this works better with WebAudio API
+                    const audioData = convertToFloat32(arrayBuffer);
+                    
+                    // Convert to base64 for sending
+                    const base64String = arrayBufferToBase64(audioData.buffer);
+                    socket.emit('audio_chunk', { audio: base64String });
+                    
+                    // Signal end of speech
+                    socket.emit('stop_speaking');
+                } catch (e) {
+                    console.error('Error processing audio:', e);
+                    status.textContent = 'Error processing audio';
+                }
+            };
+            
+            fileReader.onerror = () => {
+                status.textContent = 'Error reading audio data';
+            };
+            
+            fileReader.readAsArrayBuffer(audioBlob);
+        }
+        
+        function convertToFloat32(arrayBuffer) {
+            // Get raw audio data as Int16 (common format for audio)
+            const int16Array = new Int16Array(arrayBuffer);
+            
+            // Convert to Float32 (normalize between -1 and 1)
+            const float32Array = new Float32Array(int16Array.length);
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] / 32768.0;
+            }
+            
+            return float32Array;
+        }
+        
+        function addMessage(sender, text) {
+            const containerDiv = document.createElement('div');
+            containerDiv.className = sender === 'user' ? 'message-container user-message-container' : 'message-container bot-message-container';
+            
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'message-label';
+            labelDiv.textContent = sender === 'user' ? 'You' : 'Assistant';
+            containerDiv.appendChild(labelDiv);
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = sender === 'user' ? 'message user-message' : 'message bot-message';
+            messageDiv.textContent = text;
+            containerDiv.appendChild(messageDiv);
+            
+            if (sender === 'user') {
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'transcription-info';
+                infoDiv.textContent = 'Transcribed with Whisper';
+                containerDiv.appendChild(infoDiv);
+            }
+            
+            conversation.appendChild(containerDiv);
+            conversation.scrollTop = conversation.scrollHeight;
+        }
+        
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return window.btoa(binary);
+        }
+        
+        // Handle page visibility change to avoid issues with background tabs
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && isRecording) {
+                stopRecording();
+            }
+        });
+        
+        // Clean disconnection when page is closed
+        window.addEventListener('beforeunload', () => {
+            if (socket && socket.connected) {
+                socket.disconnect();
+            }
+        });
+    </script>
 </body>
 </html>

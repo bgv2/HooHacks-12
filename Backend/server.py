@@ -1,904 +1,388 @@
 import os
+import io
 import base64
-import json
 import time
-import math
-import gc
-import logging
-import numpy as np
 import torch
 import torchaudio
-from io import BytesIO
-from typing import List, Dict, Any, Optional
-from flask import Flask, request, send_from_directory, Response
-from flask_cors import CORS
-from flask_socketio import SocketIO, emit, disconnect
-from generator import load_csm_1b, Segment
+import numpy as np
+from flask import Flask, render_template, request
+from flask_socketio import SocketIO, emit
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from collections import deque
-from threading import Lock
-from transformers import pipeline
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+import requests
+import huggingface_hub
+from generator import load_csm_1b, Segment
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("sesame-server")
+# Configure environment with longer timeouts
+os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "600"  # 10 minutes timeout for downloads
+requests.adapters.DEFAULT_TIMEOUT = 60  # Increase default requests timeout
 
-# Determine best compute device
-if torch.backends.mps.is_available():
-    device = "mps"
-elif torch.cuda.is_available():
-    try:
-        # Test CUDA functionality
-        torch.rand(10, device="cuda")
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        torch.backends.cudnn.benchmark = True
-        device = "cuda"
-        logger.info("CUDA is fully functional")
-    except Exception as e:
-        logger.warning(f"CUDA available but not working correctly: {e}")
-        device = "cpu"
-else:
-    device = "cpu"
-    logger.info("Using CPU")
+# Create a models directory for caching
+os.makedirs("models", exist_ok=True)
 
-# Constants and Configuration
-SILENCE_THRESHOLD = 0.01
-SILENCE_DURATION_SEC = 0.75
-MAX_BUFFER_SIZE = 30  # Maximum chunks to buffer before processing
-CHUNK_SIZE_MS = 500  # Size of audio chunks when streaming responses
-
-# Define the base directory and static files directory
-base_dir = os.path.dirname(os.path.abspath(__file__))
-static_dir = os.path.join(base_dir, "static")
-os.makedirs(static_dir, exist_ok=True)
-
-# Define a simple energy-based speech detector
-class SpeechDetector:
-    def __init__(self):
-        self.min_speech_energy = 0.01
-        self.speech_window = 0.2  # seconds
-    
-    def detect_speech(self, audio_tensor, sample_rate):
-        # Calculate frame size based on window size
-        frame_size = int(sample_rate * self.speech_window)
-        
-        # If audio is shorter than frame size, use the entire audio
-        if audio_tensor.shape[0] < frame_size:
-            frames = [audio_tensor]
-        else:
-            # Split audio into frames
-            frames = [audio_tensor[i:i+frame_size] for i in range(0, len(audio_tensor), frame_size)]
-        
-        # Calculate energy per frame
-        energies = [torch.mean(frame**2).item() for frame in frames]
-        
-        # Determine if there's speech based on energy threshold
-        has_speech = any(e > self.min_speech_energy for e in energies)
-        
-        return has_speech
-
-speech_detector = SpeechDetector()
-logger.info("Initialized simple speech detector")
-
-# Model Loading Functions
-def load_speech_models():
-    """Load speech generation and recognition models"""
-    # Load CSM (existing code)
-    generator = load_csm_1b(device=device)
-    
-    # Load Whisper model for speech recognition
-    try:
-        logger.info(f"Loading speech recognition model on {device}...")
-        
-        # Try with newer API first
-        try:
-            from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
-            
-            model_id = "openai/whisper-small"
-            
-            # Load model and processor
-            model = AutoModelForSpeechSeq2Seq.from_pretrained(
-                model_id,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                device_map=device,
-            )
-            processor = AutoProcessor.from_pretrained(model_id)
-            
-            # Create pipeline with specific parameters
-            speech_recognizer = pipeline(
-                "automatic-speech-recognition",
-                model=model,
-                tokenizer=processor.tokenizer,
-                feature_extractor=processor.feature_extractor,
-                max_new_tokens=128,
-                chunk_length_s=30,
-                batch_size=16,
-                device=device,
-            )
-            
-        except Exception as api_error:
-            logger.warning(f"Newer API loading failed: {api_error}, trying simpler approach")
-            
-            # Fallback to simpler API
-            speech_recognizer = pipeline(
-                "automatic-speech-recognition", 
-                model="openai/whisper-small", 
-                device=device
-            )
-        
-        logger.info("Speech recognition model loaded successfully")
-        return generator, speech_recognizer
-        
-    except Exception as e:
-        logger.error(f"Error loading speech recognition model: {e}")
-        return generator, None
-
-# Unpack both models
-generator, speech_recognizer = load_speech_models()
-
-# Initialize Llama 3.2 model for conversation responses
-def load_llm_model():
-    """Load Llama 3.2 model for generating text responses"""
-    try:
-        logger.info("Loading Llama 3.2 model for conversational responses...")
-        model_id = "meta-llama/Llama-3.2-1B-Instruct"
-        tokenizer = AutoTokenizer.from_pretrained(model_id)
-        
-        # Determine compute device for LLM
-        llm_device = "cpu"  # Default to CPU for LLM
-        
-        # Use CUDA if available and there's enough VRAM
-        if device == "cuda" and torch.cuda.is_available():
-            try:
-                free_mem = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)
-                # If we have at least 2GB free, use CUDA for LLM
-                if free_mem > 2 * 1024 * 1024 * 1024:
-                    llm_device = "cuda"
-            except:
-                pass
-        
-        logger.info(f"Using {llm_device} for Llama 3.2 model")
-        
-        # Load the model with lower precision for efficiency
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id, 
-            torch_dtype=torch.float16 if llm_device == "cuda" else torch.float32,
-            device_map=llm_device
-        )
-        
-        # Create a pipeline for easier inference
-        llm = pipeline(
-            "text-generation",
-            model=model,
-            tokenizer=tokenizer,
-            max_length=512,
-            do_sample=True,
-            temperature=0.7,
-            top_p=0.9,
-            repetition_penalty=1.1
-        )
-        
-        logger.info("Llama 3.2 model loaded successfully")
-        return llm
-    except Exception as e:
-        logger.error(f"Error loading Llama 3.2 model: {e}")
-        return None
-
-# Load the LLM model
-llm = load_llm_model()
-
-# Set up Flask and Socket.IO
 app = Flask(__name__)
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+app.config['SECRET_KEY'] = 'your-secret-key'
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Socket connection management
-thread_lock = Lock()
-active_clients = {}  # Map client_id to client context
-
-# Audio Utility Functions
-def decode_audio_data(audio_data: str) -> torch.Tensor:
-    """Decode base64 audio data to a torch tensor with improved error handling"""
-    try:
-        # Skip empty audio data
-        if not audio_data or len(audio_data) < 100:
-            logger.warning("Empty or too short audio data received")
-            return torch.zeros(generator.sample_rate // 2)  # 0.5 seconds of silence
-            
-        # Extract the actual base64 content
-        if ',' in audio_data:
-            audio_data = audio_data.split(',')[1]
-            
-        # Decode base64 audio data
-        try:
-            binary_data = base64.b64decode(audio_data)
-            logger.debug(f"Decoded base64 data: {len(binary_data)} bytes")
-            
-            # Check if we have enough data for a valid WAV
-            if len(binary_data) < 44:  # WAV header is 44 bytes
-                logger.warning("Data too small to be a valid WAV file")
-                return torch.zeros(generator.sample_rate // 2)
-        except Exception as e:
-            logger.error(f"Base64 decoding error: {e}")
-            return torch.zeros(generator.sample_rate // 2)
-        
-        # Multiple approaches to handle audio data
-        audio_tensor = None
-        sample_rate = None
-        
-        # Approach 1: Direct loading with torchaudio
-        try:
-            with BytesIO(binary_data) as temp_file:
-                temp_file.seek(0)
-                audio_tensor, sample_rate = torchaudio.load(temp_file, format="wav")
-                logger.debug(f"Loaded audio: shape={audio_tensor.shape}, rate={sample_rate}Hz")
-                
-                # Validate tensor
-                if audio_tensor.numel() == 0 or torch.isnan(audio_tensor).any():
-                    raise ValueError("Invalid audio tensor")
-        except Exception as e:
-            logger.warning(f"Direct loading failed: {e}")
-            
-            # Approach 2: Using wave module and numpy
-            try:
-                temp_path = os.path.join(base_dir, f"temp_{time.time()}.wav")
-                with open(temp_path, 'wb') as f:
-                    f.write(binary_data)
-                
-                import wave
-                with wave.open(temp_path, 'rb') as wf:
-                    n_channels = wf.getnchannels()
-                    sample_width = wf.getsampwidth()
-                    sample_rate = wf.getframerate()
-                    n_frames = wf.getnframes()
-                    frames = wf.readframes(n_frames)
-                    
-                    # Convert to numpy array
-                    if sample_width == 2:  # 16-bit audio
-                        data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
-                    elif sample_width == 1:  # 8-bit audio
-                        data = np.frombuffer(frames, dtype=np.uint8).astype(np.float32) / 128.0 - 1.0
-                    else:
-                        raise ValueError(f"Unsupported sample width: {sample_width}")
-                    
-                    # Convert to mono if needed
-                    if n_channels > 1:
-                        data = data.reshape(-1, n_channels)
-                        data = data.mean(axis=1)
-                    
-                    # Convert to torch tensor
-                    audio_tensor = torch.from_numpy(data)
-                    logger.info(f"Loaded audio using wave: shape={audio_tensor.shape}")
-                
-                # Clean up temp file
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                    
-            except Exception as e2:
-                logger.error(f"All audio loading methods failed: {e2}")
-                return torch.zeros(generator.sample_rate // 2)
-        
-        # Format corrections
-        if audio_tensor is None:
-            return torch.zeros(generator.sample_rate // 2)
-            
-        # Ensure audio is mono
-        if len(audio_tensor.shape) > 1 and audio_tensor.shape[0] > 1:
-            audio_tensor = torch.mean(audio_tensor, dim=0)
-        
-        # Ensure 1D tensor
-        audio_tensor = audio_tensor.squeeze()
-            
-        # Resample if needed
-        if sample_rate != generator.sample_rate:
-            try:
-                logger.debug(f"Resampling from {sample_rate}Hz to {generator.sample_rate}Hz")
-                resampler = torchaudio.transforms.Resample(
-                    orig_freq=sample_rate, 
-                    new_freq=generator.sample_rate
-                )
-                audio_tensor = resampler(audio_tensor)
-            except Exception as e:
-                logger.warning(f"Resampling error: {e}")
-        
-        # Normalize audio to avoid issues
-        if torch.abs(audio_tensor).max() > 0:
-            audio_tensor = audio_tensor / torch.abs(audio_tensor).max()
-        
-        return audio_tensor
-    except Exception as e:
-        logger.error(f"Unhandled error in decode_audio_data: {e}")
-        return torch.zeros(generator.sample_rate // 2)
-
-def encode_audio_data(audio_tensor: torch.Tensor) -> str:
-    """Encode torch tensor audio to base64 string"""
-    try:
-        buf = BytesIO()
-        torchaudio.save(buf, audio_tensor.unsqueeze(0).cpu(), generator.sample_rate, format="wav")
-        buf.seek(0)
-        audio_base64 = base64.b64encode(buf.read()).decode('utf-8')
-        return f"data:audio/wav;base64,{audio_base64}"
-    except Exception as e:
-        logger.error(f"Error encoding audio: {e}")
-        # Return a minimal silent audio file
-        silence = torch.zeros(generator.sample_rate // 2).unsqueeze(0)
-        buf = BytesIO()
-        torchaudio.save(buf, silence, generator.sample_rate, format="wav")
-        buf.seek(0)
-        return f"data:audio/wav;base64,{base64.b64encode(buf.read()).decode('utf-8')}"
-
-def process_speech(audio_tensor: torch.Tensor, client_id: str) -> str:
-    """Process speech with speech recognition"""
-    if not speech_recognizer:
-        # Fallback to basic detection if model failed to load
-        return detect_speech_energy(audio_tensor)
-    
-    try:
-        # Save audio to temp file for Whisper
-        temp_path = os.path.join(base_dir, f"temp_{time.time()}.wav")
-        torchaudio.save(temp_path, audio_tensor.unsqueeze(0).cpu(), generator.sample_rate)
-        
-        # Perform speech recognition - handle the warning differently
-        # Just pass the path without any additional parameters
-        try:
-            # First try - use default parameters
-            result = speech_recognizer(temp_path)
-            transcription = result["text"]
-        except Exception as whisper_error:
-            logger.warning(f"First transcription attempt failed: {whisper_error}")
-            # Try with explicit parameters for older versions of transformers
-            import numpy as np
-            import soundfile as sf
-            
-            # Load audio as numpy array
-            audio_np, sr = sf.read(temp_path)
-            if sr != 16000:
-                # Whisper expects 16kHz audio
-                from scipy import signal
-                audio_np = signal.resample(audio_np, int(len(audio_np) * 16000 / sr))
-            
-            # Try with numpy array directly
-            result = speech_recognizer(audio_np)
-            transcription = result["text"]
-        
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        
-        # Return empty string if no speech detected
-        if not transcription or transcription.isspace():
-            return "I didn't detect any speech. Could you please try again?"
-        
-        logger.info(f"Transcription successful: '{transcription}'")
-        return transcription
-        
-    except Exception as e:
-        logger.error(f"Speech recognition error: {e}")
-        return "Sorry, I couldn't understand what you said. Could you try again?"
-
-def detect_speech_energy(audio_tensor: torch.Tensor) -> str:
-    """Basic speech detection based on audio energy levels"""
-    # Calculate audio energy
-    energy = torch.mean(torch.abs(audio_tensor)).item()
-    
-    logger.debug(f"Audio energy detected: {energy:.6f}")
-    
-    # Generate response based on energy level
-    if energy > 0.1:  # Louder speech
-        return "I heard you speaking clearly. How can I help you today?"
-    elif energy > 0.05:  # Moderate speech
-        return "I heard you say something. Could you please repeat that?"
-    elif energy > 0.02:  # Soft speech
-        return "I detected some speech, but it was quite soft. Could you speak up a bit?"
-    else:  # Very soft or no speech
-        return "I didn't detect any speech. Could you please try again?"
-
-def generate_response(text: str, conversation_history: List[Segment]) -> str:
-    """Generate a contextual response based on the transcribed text using Llama 3.2"""
-    # If LLM is not available, use simple responses
-    if llm is None:
-        return generate_simple_response(text)
-    
-    try:
-        # Create a conversational prompt based on history
-        # Format: recent conversation turns (up to 4) + current user input
-        history_str = ""
-        
-        # Add up to 4 recent conversation turns (excluding the current one)
-        recent_segments = [
-            seg for seg in conversation_history[-8:] 
-            if seg.text and not seg.text.isspace()
-        ]
-        
-        for i, segment in enumerate(recent_segments):
-            speaker_name = "User" if segment.speaker == 0 else "Assistant"
-            history_str += f"{speaker_name}: {segment.text}\n"
-            
-        # Construct the prompt for Llama 3.2
-        prompt = f"""<|system|>
-You are Sesame, a helpful, friendly and concise voice assistant. 
-Keep your responses conversational, natural, and to the point.
-Respond to the user's latest message in the context of the conversation.
-<|end|>
-
-{history_str}
-User: {text}
-Assistant:"""
-
-        logger.debug(f"LLM Prompt: {prompt}")
-        
-        # Generate response with the LLM
-        result = llm(
-            prompt,
-            max_new_tokens=150,
-            do_sample=True,
-            temperature=0.7,
-            top_p=0.9,
-            repetition_penalty=1.1
-        )
-        
-        # Extract the generated text
-        response = result[0]["generated_text"]
-        
-        # Extract just the Assistant's response (after the prompt)
-        response = response.split("Assistant:")[-1].strip()
-        
-        # Clean up and ensure it's not too long for TTS
-        response = response.split("\n")[0].strip()
-        if len(response) > 200:
-            response = response[:197] + "..."
-            
-        logger.info(f"LLM response: {response}")
-        return response
-        
-    except Exception as e:
-        logger.error(f"Error generating LLM response: {e}")
-        # Fall back to simple responses
-        return generate_simple_response(text)
-
-def generate_simple_response(text: str) -> str:
-    """Generate a simple rule-based response as fallback"""
-    responses = {
-        "hello": "Hello there! How can I help you today?",
-        "hi": "Hi there! What can I do for you?",
-        "how are you": "I'm doing well, thanks for asking! How about you?",
-        "what is your name": "I'm Sesame, your voice assistant. How can I help you?",
-        "who are you": "I'm Sesame, an AI voice assistant. I'm here to chat with you!",
-        "bye": "Goodbye! It was nice chatting with you.",
-        "thank you": "You're welcome! Is there anything else I can help with?",
-        "weather": "I don't have real-time weather data, but I hope it's nice where you are!",
-        "help": "I can chat with you using natural voice. Just speak normally and I'll respond.",
-        "what can you do": "I can have a conversation with you, answer questions, and provide assistance with various topics.",
-    }
-    
-    text_lower = text.lower()
-    
-    # Check for matching keywords
-    for key, response in responses.items():
-        if key in text_lower:
-            return response
-    
-    # Default responses based on text length
-    if not text:
-        return "I didn't catch that. Could you please repeat?"
-    elif len(text) < 10:
-        return "Thanks for your message. Could you elaborate a bit more?"
+# Check for CUDA availability and handle potential CUDA/cuDNN issues
+try:
+    cuda_available = torch.cuda.is_available()
+    # Try to initialize CUDA to check if libraries are properly loaded
+    if cuda_available:
+        _ = torch.zeros(1).cuda()
+        device = "cuda"
+        whisper_compute_type = "float16"
+        print("CUDA is available and initialized successfully")
+    elif torch.backends.mps.is_available():
+        device = "mps"
+        whisper_compute_type = "float32"
+        print("MPS is available (Apple Silicon)")
     else:
-        return f"I heard you say something about that. Can you tell me more?"
+        device = "cpu"
+        whisper_compute_type = "int8"
+        print("Using CPU (CUDA/MPS not available)")
+except Exception as e:
+    print(f"Error initializing CUDA: {e}")
+    print("Falling back to CPU")
+    device = "cpu"
+    whisper_compute_type = "int8"
+    
+print(f"Using device: {device}")
 
-# Flask Routes
+# Initialize models with proper error handling
+whisper_model = None
+csm_generator = None
+llm_model = None
+llm_tokenizer = None
+
+def load_models():
+    global whisper_model, csm_generator, llm_model, llm_tokenizer
+    
+    # Initialize Faster-Whisper for transcription
+    try:
+        print("Loading Whisper model...")
+        # Import here to avoid immediate import errors if package is missing
+        from faster_whisper import WhisperModel
+        # Force CPU for Whisper if we had CUDA issues
+        whisper_device = device if device != "cpu" else "cpu"
+        whisper_model = WhisperModel("base", device=whisper_device, compute_type=whisper_compute_type, download_root="./models/whisper")
+        print("Whisper model loaded successfully")
+    except Exception as e:
+        print(f"Error loading Whisper model: {e}")
+        print("Will use backup speech recognition method if available")
+    
+    # Initialize CSM model for audio generation
+    try:
+        print("Loading CSM model...")
+        # Force CPU for CSM if we had CUDA issues
+        csm_device = device if device != "cpu" else "cpu"
+        csm_generator = load_csm_1b(device=csm_device)
+        print("CSM model loaded successfully")
+    except Exception as e:
+        print(f"Error loading CSM model: {e}")
+        print("Audio generation will not be available")
+    
+    # Initialize Llama 3.2 model for response generation
+    try:
+        print("Loading Llama 3.2 model...")
+        llm_model_id = "meta-llama/Llama-3.2-1B"  # Choose appropriate size based on resources
+        llm_tokenizer = AutoTokenizer.from_pretrained(llm_model_id, cache_dir="./models/llama")
+        # Force CPU for LLM if we had CUDA issues
+        llm_device = device if device != "cpu" else "cpu"
+        llm_model = AutoModelForCausalLM.from_pretrained(
+            llm_model_id,
+            torch_dtype=torch.bfloat16 if llm_device != "cpu" else torch.float32,
+            device_map=llm_device,
+            cache_dir="./models/llama",
+            low_cpu_mem_usage=True
+        )
+        print("Llama 3.2 model loaded successfully")
+    except Exception as e:
+        print(f"Error loading Llama 3.2 model: {e}")
+        print("Will use a fallback response generation method")
+
+# Store conversation context
+conversation_context = {}  # session_id -> context
+
 @app.route('/')
 def index():
-    return send_from_directory(base_dir, 'index.html')
+    return render_template('index.html')
 
-@app.route('/favicon.ico')
-def favicon():
-    if os.path.exists(os.path.join(static_dir, 'favicon.ico')):
-        return send_from_directory(static_dir, 'favicon.ico')
-    return Response(status=204)
-
-@app.route('/voice-chat.js')
-def voice_chat_js():
-    return send_from_directory(base_dir, 'voice-chat.js')
-
-@app.route('/static/<path:path>')
-def serve_static(path):
-    return send_from_directory(static_dir, path)
-
-# Socket.IO Event Handlers
 @socketio.on('connect')
 def handle_connect():
-    client_id = request.sid
-    logger.info(f"Client connected: {client_id}")
-    
-    # Initialize client context
-    active_clients[client_id] = {
-        'context_segments': [],
-        'streaming_buffer': [],
-        'is_streaming': False,
-        'is_silence': False,
-        'last_active_time': time.time(),
-        'energy_window': deque(maxlen=10)
+    print(f"Client connected: {request.sid}")
+    conversation_context[request.sid] = {
+        'segments': [],
+        'speakers': [0, 1],  # 0 = user, 1 = bot
+        'audio_buffer': deque(maxlen=10),  # Store recent audio chunks
+        'is_speaking': False,
+        'silence_start': None
     }
-    
-    emit('status', {'type': 'connected', 'message': 'Connected to server'})
+    emit('ready', {'message': 'Connection established'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    client_id = request.sid
-    if client_id in active_clients:
-        del active_clients[client_id]
-    logger.info(f"Client disconnected: {client_id}")
+    print(f"Client disconnected: {request.sid}")
+    if request.sid in conversation_context:
+        del conversation_context[request.sid]
 
-@socketio.on('generate')
-def handle_generate(data):
-    client_id = request.sid
-    if client_id not in active_clients:
-        emit('error', {'message': 'Client not registered'})
+@socketio.on('start_speaking')
+def handle_start_speaking():
+    if request.sid in conversation_context:
+        conversation_context[request.sid]['is_speaking'] = True
+        conversation_context[request.sid]['audio_buffer'].clear()
+        print(f"User {request.sid} started speaking")
+
+@socketio.on('audio_chunk')
+def handle_audio_chunk(data):
+    if request.sid not in conversation_context:
         return
     
-    try:
-        text = data.get('text', '')
-        speaker_id = data.get('speaker', 0)
-        
-        logger.info(f"Generating audio for: '{text}' with speaker {speaker_id}")
-        
-        # Generate audio response
-        audio_tensor = generator.generate(
-            text=text,
-            speaker=speaker_id,
-            context=active_clients[client_id]['context_segments'],
-            max_audio_length_ms=10_000,
-        )
-        
-        # Add to conversation context
-        active_clients[client_id]['context_segments'].append(
-            Segment(text=text, speaker=speaker_id, audio=audio_tensor)
-        )
-        
-        # Convert audio to base64 and send back to client
-        audio_base64 = encode_audio_data(audio_tensor)
-        emit('audio_response', {
-            'type': 'audio_response',
-            'audio': audio_base64,
-            'text': text
-        })
-        
-    except Exception as e:
-        logger.error(f"Error generating audio: {e}")
-        emit('error', {
-            'type': 'error',
-            'message': f"Error generating audio: {str(e)}"
-        })
+    context = conversation_context[request.sid]
+    
+    # Decode audio data
+    audio_data = base64.b64decode(data['audio'])
+    audio_numpy = np.frombuffer(audio_data, dtype=np.float32)
+    audio_tensor = torch.tensor(audio_numpy)
+    
+    # Add to buffer
+    context['audio_buffer'].append(audio_tensor)
+    
+    # Check for silence to detect end of speech
+    if context['is_speaking'] and is_silence(audio_tensor):
+        if context['silence_start'] is None:
+            context['silence_start'] = time.time()
+        elif time.time() - context['silence_start'] > 1.0:  # 1 second of silence
+            # Process the complete utterance
+            process_user_utterance(request.sid)
+    else:
+        context['silence_start'] = None
 
-@socketio.on('add_to_context')
-def handle_add_to_context(data):
-    client_id = request.sid
-    if client_id not in active_clients:
-        emit('error', {'message': 'Client not registered'})
+@socketio.on('stop_speaking')
+def handle_stop_speaking():
+    if request.sid in conversation_context:
+        conversation_context[request.sid]['is_speaking'] = False
+        process_user_utterance(request.sid)
+        print(f"User {request.sid} stopped speaking")
+
+def is_silence(audio_tensor, threshold=0.02):
+    """Check if an audio chunk is silence based on amplitude threshold"""
+    return torch.mean(torch.abs(audio_tensor)) < threshold
+
+def process_user_utterance(session_id):
+    """Process completed user utterance, generate response and send audio back"""
+    context = conversation_context[session_id]
+    
+    if not context['audio_buffer']:
         return
     
-    try:
-        text = data.get('text', '')
-        speaker_id = data.get('speaker', 0)
-        audio_data = data.get('audio', '')
-        
-        # Convert received audio to tensor
-        audio_tensor = decode_audio_data(audio_data)
-        
-        # Add to conversation context
-        active_clients[client_id]['context_segments'].append(
-            Segment(text=text, speaker=speaker_id, audio=audio_tensor)
-        )
-        
-        emit('context_updated', {
-            'type': 'context_updated',
-            'message': 'Audio added to context'
-        })
-        
-    except Exception as e:
-        logger.error(f"Error adding to context: {e}")
-        emit('error', {
-            'type': 'error',
-            'message': f"Error processing audio: {str(e)}"
-        })
-
-@socketio.on('clear_context')
-def handle_clear_context():
-    client_id = request.sid
-    if client_id in active_clients:
-        active_clients[client_id]['context_segments'] = []
-        
-    emit('context_updated', {
-        'type': 'context_updated',
-        'message': 'Context cleared'
-    })
-
-@socketio.on('stream_audio')
-def handle_stream_audio(data):
-    client_id = request.sid
-    if client_id not in active_clients:
-        emit('error', {'message': 'Client not registered'})
-        return
+    # Combine audio chunks
+    full_audio = torch.cat(list(context['audio_buffer']), dim=0)
+    context['audio_buffer'].clear()
+    context['is_speaking'] = False
+    context['silence_start'] = None
     
-    client = active_clients[client_id]
+    # Save audio to temporary WAV file for transcription
+    temp_audio_path = f"temp_audio_{session_id}.wav"
+    torchaudio.save(
+        temp_audio_path, 
+        full_audio.unsqueeze(0), 
+        44100  # Assuming 44.1kHz from client
+    )
     
     try:
-        speaker_id = data.get('speaker', 0)
-        audio_data = data.get('audio', '')
-        
-        # Skip if no audio data (might be just a connection test)
-        if not audio_data:
-            logger.debug("Empty audio data received, ignoring")
-            return
-        
-        # Convert received audio to tensor
-        audio_chunk = decode_audio_data(audio_data)
-        
-        # Start streaming mode if not already started
-        if not client['is_streaming']:
-            client['is_streaming'] = True
-            client['streaming_buffer'] = []
-            client['energy_window'].clear()
-            client['is_silence'] = False
-            client['last_active_time'] = time.time()
-            logger.info(f"[{client_id[:8]}] Streaming started with speaker ID: {speaker_id}")
-            emit('streaming_status', {
-                'type': 'streaming_status',
-                'status': 'started'
-            })
-        
-        # Calculate audio energy for silence detection
-        chunk_energy = torch.mean(torch.abs(audio_chunk)).item()
-        client['energy_window'].append(chunk_energy)
-        avg_energy = sum(client['energy_window']) / len(client['energy_window'])
-        
-        # Check if audio is silent
-        current_silence = avg_energy < SILENCE_THRESHOLD
-        
-        # Track silence transition
-        if not client['is_silence'] and current_silence:
-            # Transition to silence
-            client['is_silence'] = True
-            client['last_active_time'] = time.time()
-        elif client['is_silence'] and not current_silence:
-            # User started talking again
-            client['is_silence'] = False
-        
-        # Add chunk to buffer regardless of silence state
-        client['streaming_buffer'].append(audio_chunk)
-            
-        # Check if silence has persisted long enough to consider "stopped talking"
-        silence_elapsed = time.time() - client['last_active_time']
-        
-        if client['is_silence'] and silence_elapsed >= SILENCE_DURATION_SEC and len(client['streaming_buffer']) > 0:
-            # User has stopped talking - process the collected audio
-            logger.info(f"[{client_id[:8]}] Processing audio after {silence_elapsed:.2f}s of silence")
-            process_complete_utterance(client_id, client, speaker_id)
-        
-        # If buffer gets too large without silence, process it anyway
-        elif len(client['streaming_buffer']) >= MAX_BUFFER_SIZE:
-            logger.info(f"[{client_id[:8]}] Processing long audio segment without silence")
-            process_complete_utterance(client_id, client, speaker_id, is_incomplete=True)
-            
-            # Keep half of the buffer for context (sliding window approach)
-            half_point = len(client['streaming_buffer']) // 2
-            client['streaming_buffer'] = client['streaming_buffer'][half_point:]
-            
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        logger.error(f"Error processing streaming audio: {e}")
-        emit('error', {
-            'type': 'error',
-            'message': f"Error processing streaming audio: {str(e)}"
-        })
-
-def process_complete_utterance(client_id, client, speaker_id, is_incomplete=False):
-    """Process a complete utterance (after silence or buffer limit)"""
-    try:
-        # Combine audio chunks
-        full_audio = torch.cat(client['streaming_buffer'], dim=0)
-        
-        # Process audio to generate a response (using speech recognition)
-        generated_text = process_speech(full_audio, client_id)
-        
-        # Add suffix for incomplete utterances
-        if is_incomplete:
-            generated_text += " (processing continued speech...)"
-        
-        # Log the generated text
-        logger.info(f"[{client_id[:8]}] Generated text: '{generated_text}'")
-        
-        # Handle the result
-        if generated_text:
-            # Add user message to context
-            user_segment = Segment(text=generated_text, speaker=speaker_id, audio=full_audio)
-            client['context_segments'].append(user_segment)
-            
-            # Send the text to client
-            emit('transcription', {
-                'type': 'transcription',
-                'text': generated_text
-            }, room=client_id)
-            
-            # Only generate a response if this is a complete utterance
-            if not is_incomplete:
-                # Generate a contextual response
-                response_text = generate_response(generated_text, client['context_segments'])
-                logger.info(f"[{client_id[:8]}] Generating response: '{response_text}'")
-                
-                # Let the client know we're processing
-                emit('processing_status', {
-                    'type': 'processing_status',
-                    'status': 'generating_audio',
-                    'message': 'Generating audio response...'
-                }, room=client_id)
-                
-                # Generate audio for the response
-                try:
-                    # Use a different speaker than the user
-                    ai_speaker_id = 1 if speaker_id == 0 else 0
-                    
-                    # Generate the full response
-                    audio_tensor = generator.generate(
-                        text=response_text,
-                        speaker=ai_speaker_id,
-                        context=client['context_segments'],
-                        max_audio_length_ms=10_000,
-                    )
-                    
-                    # Add response to context
-                    ai_segment = Segment(
-                        text=response_text, 
-                        speaker=ai_speaker_id, 
-                        audio=audio_tensor
-                    )
-                    client['context_segments'].append(ai_segment)
-                    
-                    # CHANGE HERE: Use the streaming function instead of sending all at once
-                    # Check if the audio is short enough to send at once or if it should be streamed
-                    if audio_tensor.size(0) < generator.sample_rate * 2:  # Less than 2 seconds
-                        # For short responses, just send in one go for better responsiveness
-                        audio_base64 = encode_audio_data(audio_tensor)
-                        emit('audio_response', {
-                            'type': 'audio_response',
-                            'text': response_text,
-                            'audio': audio_base64
-                        }, room=client_id)
-                        logger.info(f"[{client_id[:8]}] Short audio response sent in one piece")
-                    else:
-                        # For longer responses, use streaming
-                        logger.info(f"[{client_id[:8]}] Using streaming for audio response")
-                        # Start a new thread for streaming to avoid blocking the main thread
-                        import threading
-                        stream_thread = threading.Thread(
-                            target=stream_audio_to_client,
-                            args=(client_id, audio_tensor, response_text, ai_speaker_id)
-                        )
-                        stream_thread.start()
-                        
-                except Exception as e:
-                    logger.error(f"Error generating audio response: {e}")
-                    emit('error', {
-                        'type': 'error',
-                        'message': "Sorry, there was an error generating the audio response."
-                    }, room=client_id)
+        # Try using Whisper first if available
+        if whisper_model is not None:
+            user_text = transcribe_with_whisper(temp_audio_path)
         else:
-            # If processing failed, send a notification
-            emit('error', {
-                'type': 'error',
-                'message': "Sorry, I couldn't understand what you said. Could you try again?"
-            }, room=client_id)
+            # Fallback to Google's speech recognition
+            user_text = transcribe_with_google(temp_audio_path)
         
-        # Only clear buffer for complete utterances
-        if not is_incomplete:
-            # Reset state
-            client['streaming_buffer'] = []
-            client['energy_window'].clear()
-            client['is_silence'] = False
-            client['last_active_time'] = time.time()
-            
-    except Exception as e:
-        logger.error(f"Error processing utterance: {e}")
-        emit('error', {
-            'type': 'error',
-            'message': f"Error processing audio: {str(e)}"
-        }, room=client_id)
-
-@socketio.on('stop_streaming')
-def handle_stop_streaming(data):
-    client_id = request.sid
-    if client_id not in active_clients:
-        return
-    
-    client = active_clients[client_id]
-    client['is_streaming'] = False
-    
-    if client['streaming_buffer'] and len(client['streaming_buffer']) > 5:
-        # Process any remaining audio in the buffer
-        logger.info(f"[{client_id[:8]}] Processing final audio buffer on stop")
-        process_complete_utterance(client_id, client, data.get("speaker", 0))
-    
-    client['streaming_buffer'] = []
-    emit('streaming_status', {
-        'type': 'streaming_status',
-        'status': 'stopped'
-    })
-
-def stream_audio_to_client(client_id, audio_tensor, text, speaker_id, chunk_size_ms=CHUNK_SIZE_MS):
-    """Stream audio to client in chunks to simulate real-time generation"""
-    try:
-        if client_id not in active_clients:
-            logger.warning(f"Client {client_id} not found for streaming")
+        if not user_text:
+            print("No speech detected.")
+            emit('error', {'message': 'No speech detected. Please try again.'}, room=session_id)
             return
             
-        # Calculate chunk size in samples
-        chunk_size = int(generator.sample_rate * chunk_size_ms / 1000)
-        total_chunks = math.ceil(audio_tensor.size(0) / chunk_size)
+        print(f"Transcribed: {user_text}")
         
-        logger.info(f"Streaming audio in {total_chunks} chunks of {chunk_size_ms}ms each")
+        # Add to conversation segments
+        user_segment = Segment(
+            text=user_text,
+            speaker=0,  # User is speaker 0
+            audio=full_audio
+        )
+        context['segments'].append(user_segment)
         
-        # Send initial response with text but no audio yet
-        socketio.emit('audio_response_start', {
-            'type': 'audio_response_start',
-            'text': text,
-            'total_chunks': total_chunks
-        }, room=client_id)
+        # Generate bot response
+        bot_response = generate_llm_response(user_text, context['segments'])
+        print(f"Bot response: {bot_response}")
         
-        # Stream each chunk
-        for i in range(total_chunks):
-            start_idx = i * chunk_size
-            end_idx = min(start_idx + chunk_size, audio_tensor.size(0))
-            
-            # Extract chunk
-            chunk = audio_tensor[start_idx:end_idx]
-            
-            # Encode chunk
-            chunk_base64 = encode_audio_data(chunk)
-            
-            # Send chunk
-            socketio.emit('audio_response_chunk', {
-                'type': 'audio_response_chunk',
-                'chunk_index': i,
-                'total_chunks': total_chunks,
-                'audio': chunk_base64,
-                'is_last': i == total_chunks - 1
-            }, room=client_id)
-            
-            # Brief pause between chunks to simulate streaming
-            time.sleep(0.1)
-            
-        # Send completion message
-        socketio.emit('audio_response_complete', {
-            'type': 'audio_response_complete',
-            'text': text
-        }, room=client_id)
+        # Send transcribed text to client
+        emit('transcription', {'text': user_text}, room=session_id)
         
-        logger.info(f"Audio streaming complete: {total_chunks} chunks sent")
+        # Generate and send audio response if CSM is available
+        if csm_generator is not None:
+            # Convert to audio using CSM
+            bot_audio = generate_audio_response(bot_response, context['segments'])
+            
+            # Convert audio to base64 for sending over websocket
+            audio_bytes = io.BytesIO()
+            torchaudio.save(audio_bytes, bot_audio.unsqueeze(0).cpu(), csm_generator.sample_rate, format="wav")
+            audio_bytes.seek(0)
+            audio_b64 = base64.b64encode(audio_bytes.read()).decode('utf-8')
+            
+            # Add bot response to conversation history
+            bot_segment = Segment(
+                text=bot_response,
+                speaker=1,  # Bot is speaker 1
+                audio=bot_audio
+            )
+            context['segments'].append(bot_segment)
+            
+            # Send audio response to client
+            emit('audio_response', {
+                'audio': audio_b64,
+                'text': bot_response
+            }, room=session_id)
+        else:
+            # Send text-only response if audio generation isn't available
+            emit('text_response', {'text': bot_response}, room=session_id)
+            
+            # Add text-only bot response to conversation history
+            bot_segment = Segment(
+                text=bot_response,
+                speaker=1,  # Bot is speaker 1
+                audio=torch.zeros(1)  # Placeholder empty audio
+            )
+            context['segments'].append(bot_segment)
         
     except Exception as e:
-        logger.error(f"Error streaming audio to client: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error processing speech: {e}")
+        emit('error', {'message': f'Error processing speech: {str(e)}'}, room=session_id)
+    finally:
+        # Cleanup temp file
+        if os.path.exists(temp_audio_path):
+            os.remove(temp_audio_path)
 
-# Main server start
-if __name__ == "__main__":
-    print(f"\n{'='*60}")
-    print(f"🔊 Sesame AI Voice Chat Server")
-    print(f"{'='*60}")
-    print(f"📡 Server Information:")
-    print(f"   - Local URL: http://localhost:5000")
-    print(f"   - Network URL: http://<your-ip-address>:5000")
-    print(f"{'='*60}")
-    print(f"🌐 Device: {device.upper()}")
-    print(f"🧠 Models: Sesame CSM (TTS only)")
-    print(f"🔧 Serving from: {os.path.join(base_dir, 'index.html')}")
-    print(f"{'='*60}")
-    print(f"Ready to receive connections! Press Ctrl+C to stop the server.\n")
+def transcribe_with_whisper(audio_path):
+    """Transcribe audio using Faster-Whisper"""
+    segments, info = whisper_model.transcribe(audio_path, beam_size=5)
     
-    socketio.run(app, host="0.0.0.0", port=5000, debug=False)
+    # Collect all text from segments
+    user_text = ""
+    for segment in segments:
+        segment_text = segment.text.strip()
+        print(f"[{segment.start:.2f}s -> {segment.end:.2f}s] {segment_text}")
+        user_text += segment_text + " "
+    
+    return user_text.strip()
+
+def transcribe_with_google(audio_path):
+    """Fallback transcription using Google's speech recognition"""
+    import speech_recognition as sr
+    recognizer = sr.Recognizer()
+    
+    with sr.AudioFile(audio_path) as source:
+        audio = recognizer.record(source)
+        try:
+            text = recognizer.recognize_google(audio)
+            return text
+        except sr.UnknownValueError:
+            return ""
+        except sr.RequestError:
+            # If Google API fails, try a basic energy-based VAD approach
+            # This is a very basic fallback and won't give good results
+            return "[Speech detected but transcription failed]"
+
+def generate_llm_response(user_text, conversation_segments):
+    """Generate text response using available model"""
+    if llm_model is not None and llm_tokenizer is not None:
+        # Format conversation history for the LLM
+        conversation_history = ""
+        for segment in conversation_segments[-5:]:  # Use last 5 utterances for context
+            speaker_name = "User" if segment.speaker == 0 else "Assistant"
+            conversation_history += f"{speaker_name}: {segment.text}\n"
+        
+        # Add the current user query
+        conversation_history += f"User: {user_text}\nAssistant:"
+        
+        try:
+            # Generate response
+            inputs = llm_tokenizer(conversation_history, return_tensors="pt").to(device)
+            output = llm_model.generate(
+                inputs.input_ids, 
+                max_new_tokens=150,
+                temperature=0.7,
+                top_p=0.9,
+                do_sample=True
+            )
+            
+            response = llm_tokenizer.decode(output[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+            return response.strip()
+        except Exception as e:
+            print(f"Error generating response with LLM: {e}")
+            return fallback_response(user_text)
+    else:
+        return fallback_response(user_text)
+
+def fallback_response(user_text):
+    """Generate a simple fallback response when LLM is not available"""
+    # Simple rule-based responses
+    user_text_lower = user_text.lower()
+    
+    if "hello" in user_text_lower or "hi" in user_text_lower:
+        return "Hello! I'm a simple fallback assistant. The main language model couldn't be loaded, so I have limited capabilities."
+    
+    elif "how are you" in user_text_lower:
+        return "I'm functioning within my limited capabilities. How can I assist you today?"
+    
+    elif "thank" in user_text_lower:
+        return "You're welcome! Let me know if there's anything else I can help with."
+    
+    elif "bye" in user_text_lower or "goodbye" in user_text_lower:
+        return "Goodbye! Have a great day!"
+    
+    elif any(q in user_text_lower for q in ["what", "who", "where", "when", "why", "how"]):
+        return "I'm running in fallback mode and can't answer complex questions. Please try again when the main language model is available."
+        
+    else:
+        return "I understand you said something about that. Unfortunately, I'm running in fallback mode with limited capabilities. Please try again later when the main model is available."
+
+def generate_audio_response(text, conversation_segments):
+    """Generate audio response using CSM"""
+    try:
+        # Use the last few conversation segments as context
+        context_segments = conversation_segments[-4:] if len(conversation_segments) > 4 else conversation_segments
+        
+        # Generate audio for bot response
+        audio = csm_generator.generate(
+            text=text,
+            speaker=1,  # Bot is speaker 1
+            context=context_segments,
+            max_audio_length_ms=10000,  # 10 seconds max
+            temperature=0.9,
+            topk=50
+        )
+        
+        return audio
+    except Exception as e:
+        print(f"Error generating audio: {e}")
+        # Return silence as fallback
+        return torch.zeros(csm_generator.sample_rate * 3)  # 3 seconds of silence
+
+if __name__ == '__main__':
+    # Ensure the existing index.html file is in the correct location
+    if not os.path.exists('templates'):
+        os.makedirs('templates')
+    
+    if os.path.exists('index.html') and not os.path.exists('templates/index.html'):
+        os.rename('index.html', 'templates/index.html')
+    
+    # Load models asynchronously before starting the server
+    print("Starting model loading...")
+    # In a production environment, you could load models in a separate thread
+    load_models()
+    
+    # Start the server
+    print("Starting Flask SocketIO server...")
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False)

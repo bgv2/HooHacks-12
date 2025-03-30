@@ -1,0 +1,304 @@
+/index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sesame AI Voice Chat</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .conversation {
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            padding: 15px;
+            height: 300px;
+            overflow-y: auto;
+            margin-bottom: 15px;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 8px;
+            border-radius: 8px;
+        }
+        .user {
+            background-color: #e3f2fd;
+            text-align: right;
+        }
+        .ai {
+            background-color: #f1f1f1;
+        }
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .input-row {
+            display: flex;
+            gap: 10px;
+        }
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        button {
+            padding: 8px 16px;
+            border-radius: 4px;
+            border: none;
+            background-color: #4CAF50;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .recording {
+            background-color: #f44336;
+        }
+        select {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <h1>Sesame AI Voice Chat</h1>
+    <div class="conversation" id="conversation"></div>
+    
+    <div class="controls">
+        <div class="input-row">
+            <input type="text" id="textInput" placeholder="Type your message...">
+            <select id="speakerSelect">
+                <option value="0">Speaker 0</option>
+                <option value="1">Speaker 1</option>
+            </select>
+            <button id="sendText">Send</button>
+        </div>
+        
+        <div class="input-row">
+            <button id="recordAudio">Record Audio</button>
+            <button id="clearContext">Clear Context</button>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        
+        // DOM elements
+        const conversationEl = document.getElementById('conversation');
+        const textInputEl = document.getElementById('textInput');
+        const speakerSelectEl = document.getElementById('speakerSelect');
+        const sendTextBtn = document.getElementById('sendText');
+        const recordAudioBtn = document.getElementById('recordAudio');
+        const clearContextBtn = document.getElementById('clearContext');
+        
+        // Connect to WebSocket
+        function connectWebSocket() {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.hostname}:8000/ws`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                addSystemMessage('Connected to server');
+            };
+            
+            ws.onmessage = (event) => {
+                const response = JSON.parse(event.data);
+                console.log('Received:', response);
+                
+                if (response.type === 'audio_response') {
+                    // Play audio response
+                    const audio = new Audio(response.audio);
+                    audio.play();
+                    
+                    // Add message to conversation
+                    addAIMessage(response.audio);
+                } else if (response.type === 'error') {
+                    addSystemMessage(`Error: ${response.message}`);
+                } else if (response.type === 'context_updated') {
+                    addSystemMessage(response.message);
+                }
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                addSystemMessage('Disconnected from server. Reconnecting...');
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                addSystemMessage('Connection error');
+            };
+        }
+        
+        // Add message to conversation
+        function addUserMessage(text) {
+            const messageEl = document.createElement('div');
+            messageEl.classList.add('message', 'user');
+            messageEl.textContent = text;
+            conversationEl.appendChild(messageEl);
+            conversationEl.scrollTop = conversationEl.scrollHeight;
+        }
+        
+        function addAIMessage(audioSrc) {
+            const messageEl = document.createElement('div');
+            messageEl.classList.add('message', 'ai');
+            
+            const audioEl = document.createElement('audio');
+            audioEl.controls = true;
+            audioEl.src = audioSrc;
+            
+            messageEl.appendChild(audioEl);
+            conversationEl.appendChild(messageEl);
+            conversationEl.scrollTop = conversationEl.scrollHeight;
+        }
+        
+        function addSystemMessage(text) {
+            const messageEl = document.createElement('div');
+            messageEl.classList.add('message');
+            messageEl.textContent = text;
+            conversationEl.appendChild(messageEl);
+            conversationEl.scrollTop = conversationEl.scrollHeight;
+        }
+        
+        // Send text for audio generation
+        function sendTextForGeneration() {
+            const text = textInputEl.value.trim();
+            const speaker = parseInt(speakerSelectEl.value);
+            
+            if (!text) return;
+            
+            addUserMessage(text);
+            textInputEl.value = '';
+            
+            const request = {
+                action: 'generate',
+                text: text,
+                speaker: speaker
+            };
+            
+            ws.send(JSON.stringify(request));
+        }
+        
+        // Audio recording functions
+        async function setupRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                mediaRecorder = new MediaRecorder(stream);
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    
+                    // Add audio to conversation
+                    addUserMessage('Recorded audio:');
+                    const messageEl = document.createElement('div');
+                    messageEl.classList.add('message', 'user');
+                    
+                    const audioEl = document.createElement('audio');
+                    audioEl.controls = true;
+                    audioEl.src = audioUrl;
+                    
+                    messageEl.appendChild(audioEl);
+                    conversationEl.appendChild(messageEl);
+                    
+                    // Convert to base64
+                    const reader = new FileReader();
+                    reader.readAsDataURL(audioBlob);
+                    reader.onloadend = () => {
+                        const base64Audio = reader.result;
+                        const text = textInputEl.value.trim() || "Recorded audio";
+                        const speaker = parseInt(speakerSelectEl.value);
+                        
+                        // Send to server
+                        const request = {
+                            action: 'add_to_context',
+                            text: text,
+                            speaker: speaker,
+                            audio: base64Audio
+                        };
+                        
+                        ws.send(JSON.stringify(request));
+                        textInputEl.value = '';
+                    };
+                    
+                    audioChunks = [];
+                    recordAudioBtn.textContent = 'Record Audio';
+                    recordAudioBtn.classList.remove('recording');
+                };
+                
+                console.log('Recording setup completed');
+                return true;
+            } catch (err) {
+                console.error('Error setting up recording:', err);
+                addSystemMessage(`Microphone access error: ${err.message}`);
+                return false;
+            }
+        }
+        
+        function toggleRecording() {
+            if (isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+            } else {
+                if (!mediaRecorder) {
+                    setupRecording().then(success => {
+                        if (success) startRecording();
+                    });
+                } else {
+                    startRecording();
+                }
+            }
+        }
+        
+        function startRecording() {
+            audioChunks = [];
+            mediaRecorder.start();
+            isRecording = true;
+            recordAudioBtn.textContent = 'Stop Recording';
+            recordAudioBtn.classList.add('recording');
+        }
+        
+        // Event listeners
+        sendTextBtn.addEventListener('click', sendTextForGeneration);
+        
+        textInputEl.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendTextForGeneration();
+        });
+        
+        recordAudioBtn.addEventListener('click', toggleRecording);
+        
+        clearContextBtn.addEventListener('click', () => {
+            ws.send(JSON.stringify({
+                action: 'clear_context'
+            }));
+        });
+        
+        // Initialize
+        window.addEventListener('load', () => {
+            connectWebSocket();
+            setupRecording();
+        });
+    </script>
+</body>
+</html>

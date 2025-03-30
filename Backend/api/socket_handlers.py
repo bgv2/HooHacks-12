@@ -43,6 +43,7 @@ class Conversation:
 
 def register_handlers(socketio, app, models, active_conversations, user_queues, processing_threads, DEVICE):
     """Register Socket.IO event handlers"""
+    # No need for global references, just use the parameters directly
     
     @socketio.on('connect')
     def handle_connect(auth=None):
@@ -127,7 +128,7 @@ def process_audio_queue(session_id, q, app, socketio, models, active_conversatio
         with app.app_context():
             if session_id in active_conversations:
                 del active_conversations[session_id]
-            if session_id in user_queues:
+            if session_id in user_queues:  # Use the passed-in reference
                 del user_queues[session_id]
 
 def process_audio_and_respond(session_id, data, app, socketio, models, active_conversations, DEVICE):

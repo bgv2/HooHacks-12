@@ -118,11 +118,44 @@
             width: 100%;
             margin-top: 5px;
         }
+        .visualizer-container {
+            width: 100%;
+            height: 60px;
+            background-color: #f5f5f5;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .audio-visualizer {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        .visualizer-label {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #999;
+            font-size: 0.9em;
+            pointer-events: none;
+            opacity: 0.7;
+            text-align: center;
+            width: 100%;
+        }
     </style>
 </head>
 <body>
     <h1>Sesame AI Voice Chat</h1>
     <div class="conversation" id="conversation"></div>
+    
+    <div class="visualizer-container">
+        <canvas id="audioVisualizer" class="audio-visualizer"></canvas>
+        <div id="visualizerLabel" class="visualizer-label">Audio levels will appear here when speaking</div>
+    </div>
     
     <div class="controls">
         <select id="speakerSelect">
@@ -151,6 +184,15 @@
         const CLIENT_SILENCE_THRESHOLD = 0.01;
         const CLIENT_SILENCE_DURATION_MS = 1000; // 1 second
         
+        // Add these variables with your existing ones
+        let analyser;
+        let visualizerCanvas;
+        let canvasContext;
+        let visualizerBufferLength;
+        let visualizerDataArray;
+        let visualizerAnimationFrame;
+        const visualizerLabel = document.getElementById('visualizerLabel');
+        
         // DOM elements
         const conversationEl = document.getElementById('conversation');
         const speakerSelectEl = document.getElementById('speakerSelect');
@@ -163,6 +205,7 @@
         window.addEventListener('load', () => {
             connectWebSocket();
             setupAudioContext();
+            setupVisualizer();
             
             // Event listeners
             streamButton.addEventListener('click', toggleStreaming);
@@ -264,7 +307,26 @@
                 
                 // Create audio processor node
                 const source = audioContext.createMediaStreamSource(stream);
+                
+                // Set up analyser for visualization
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                visualizerBufferLength = analyser.frequencyBinCount;
+                visualizerDataArray = new Uint8Array(visualizerBufferLength);
+                source.connect(analyser);
+                
+                // Hide the label when visualization is active
+                visualizerLabel.style.opacity = '0';
+                
+                // Start drawing the visualization
+                drawVisualizer();
+                
+                // Set up processor for audio processing
                 streamProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                // Connect nodes
+                source.connect(streamProcessor);
+                streamProcessor.connect(audioContext.destination);
                 
                 // Process and send audio data
                 streamProcessor.onaudioprocess = function(e) {
@@ -285,10 +347,6 @@
                     const downsampled = downsampleBuffer(audioData, audioContext.sampleRate, 24000);
                     sendAudioChunk(downsampled, speaker);
                 };
-                
-                // Connect the nodes
-                source.connect(streamProcessor);
-                streamProcessor.connect(audioContext.destination);
                 
                 addSystemMessage('Listening - speak naturally and pause when finished');
                 
@@ -387,6 +445,23 @@
             if (streamProcessor) {
                 streamProcessor.disconnect();
                 streamProcessor = null;
+            }
+            
+            if (analyser) {
+                analyser.disconnect();
+                analyser = null;
+            }
+            
+            // Stop the visualization
+            if (visualizerAnimationFrame) {
+                cancelAnimationFrame(visualizerAnimationFrame);
+                visualizerAnimationFrame = null;
+            }
+            
+            // Clear the canvas
+            if (canvasContext) {
+                canvasContext.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
+                visualizerLabel.style.opacity = '0.7';
             }
             
             // Clear any pending silence timer
@@ -536,6 +611,64 @@
             messageEl.textContent = text;
             conversationEl.appendChild(messageEl);
             conversationEl.scrollTop = conversationEl.scrollHeight;
+        }
+        
+        // Setup the audio visualizer
+        function setupVisualizer() {
+            visualizerCanvas = document.getElementById('audioVisualizer');
+            canvasContext = visualizerCanvas.getContext('2d');
+            
+            // Set canvas size to match container
+            function resizeCanvas() {
+                const container = visualizerCanvas.parentElement;
+                visualizerCanvas.width = container.clientWidth;
+                visualizerCanvas.height = container.clientHeight;
+            }
+            
+            // Call initially and on window resize
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+        }
+        
+        // Add the visualization drawing function
+        function drawVisualizer() {
+            if (!isStreaming) {
+                if (visualizerAnimationFrame) {
+                    cancelAnimationFrame(visualizerAnimationFrame);
+                    visualizerAnimationFrame = null;
+                }
+                
+                // Clear the canvas
+                canvasContext.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
+                visualizerLabel.style.opacity = '0.7';
+                return;
+            }
+            
+            visualizerAnimationFrame = requestAnimationFrame(drawVisualizer);
+            
+            // Get the frequency data
+            analyser.getByteFrequencyData(visualizerDataArray);
+            
+            // Clear the canvas
+            canvasContext.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
+            
+            // Calculate bar width based on canvas size and buffer length
+            const barWidth = (visualizerCanvas.width / visualizerBufferLength) * 2.5;
+            let barHeight;
+            let x = 0;
+            
+            // Draw bars
+            for (let i = 0; i < visualizerBufferLength; i++) {
+                barHeight = visualizerDataArray[i] / 2; // Scale down to fit in canvas
+                
+                // Use a gradient color based on frequency intensity
+                const hue = i / visualizerBufferLength * 180 + 180; // Blue to green spectrum
+                canvasContext.fillStyle = `hsl(${hue}, 100%, ${50 + (barHeight / 2)}%)`;
+                
+                canvasContext.fillRect(x, visualizerCanvas.height - barHeight, barWidth, barHeight);
+                
+                x += barWidth + 1;
+            }
         }
     </script>
 </body>

@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import './styles.css';
 
 export default function Home() {
 	const [contacts, setContacts] = useState<string[]>([]);
@@ -14,7 +15,9 @@ export default function Home() {
 		fetch("/auth/session")
 			.then((response) => response.json())
 			.then((data) => {
+				console.log("Session data received:", data);
 				setSession(data.session);
+				
 				setLoading(false);
 			})
 			.catch((error) => {
@@ -57,104 +60,64 @@ export default function Home() {
 	if (loading) {
 		return <div>Loading...</div>;
 	}
+	
 
 	// If no session, show sign-up and login buttons
 	if (!session) {
 		return (
-			<div className="space-y-7 bg-indigo-800 items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
+			<div className="space-y-7  items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
+				
+				<h1
+  className="space-y-3 text-6xl text-lime-500 subpixel-antialiased font-bold animate-fadeIn"
+  style={{ fontFamily: "'Nunito', sans-serif" }}
+>
+  Welcome to Fauxcall
+</h1>
+
+
+				<p>
+					We empower you to feel safe, whenever and wherever.
+				</p>
+
+				<p>
+					Make an account to begin.
+				</p>
+
+
+
 				<main className="space-x-2 flex flex-row gap-[32px] row-start-2 items-center sm:items-start">
 					<a href="/auth/login?screen_hint=signup">
 						<button className="box-content w-32 border-2 h-16 text-2xl bg-violet-900 text-green-300">
 							Sign up
 						</button>
 					</a>
+				</main>
+					<p>
+					
+					Already have an account?
+				</p>
 					<a href="/auth/login">
 						<button className="box-content w-32 border-2 h-16 text-2xl bg-violet-900 text-green-400">
 							Log in
 						</button>
 					</a>
-				</main>
-				<h1 className="space-y-3 text-6xl text-lime-500 subpixel-antialiased font-stretch-semi-expanded font-serif">
-					Fauxcall
-				</h1>
-				<h2 className="space-y-3 text-6x1 text-red-700 antialiased font-mono">
-					Set emergency contacts
-				</h2>
-				<p>
-					If you stop speaking or say the codeword, these contacts will be
-					notified
-				</p>
-				{/* form for setting codeword */}
-				<form
-					className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start"
-					onSubmit={(e) => e.preventDefault()}
-				>
-					<input
-						type="text"
-						value={codeword}
-						onChange={(e) => setCodeword(e.target.value)}
-						placeholder="Codeword"
-						className="border border-gray-300 rounded-md p-2"
-					/>
-					<button
-						className="bg-blue-500 text-white font-semibold font-lg rounded-md p-2"
-						type="submit"
-					>
-						Set codeword
-					</button>
-				</form>
-				{/* form for adding contacts */}
-				<form
-					className="space-y-5 flex flex-col gap-[32px] row-start-2 items-center sm:items-start"
-					onSubmit={(e) => e.preventDefault()}
-				>
-					<input
-						type="text"
-						value={contacts}
-						onChange={(e) => setContacts(e.target.value.split(","))}
-						placeholder="Write down an emergency contact"
-						className="border border-gray-300 rounded-md p-2"
-					/>
-					<input
-						type="text"
-						value={contacts}
-						onChange={(e) => setContacts(e.target.value.split(","))}
-						placeholder="Write down an emergency contact"
-						className="border border-gray-300 rounded-md p-2"
-					/>
-					<input
-						type="text"
-						value={contacts}
-						onChange={(e) => setContacts(e.target.value.split(","))}
-						placeholder="Write down an emergency contact"
-						className="border border-gray-300 rounded-md p-2"
-					/>
-					<button type="button">Add</button>
-					<button
-						className="bg-slate-500 text-yellow-300 text-stretch-50% font-lg rounded-md p-2"
-						type="submit"
-					>
-						Set contacts
-					</button>
-				</form>
+				
+
 			</div>
 		);
 	}
 
 	return (
+		
 		<div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
 			<main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-				<h1>Welcome, {session.user.name}!</h1>
+			
 
-				<h1 className="space-y-3 text-6xl text-lime-500 subpixel-antialiased font-stretch-semi-expanded font-serif">
-					Fauxcall
-				</h1>
-				<h2 className="space-y-3 text-6x1 text-red-700 antialiased font-mono">
-					Set emergency contacts
-				</h2>
+				<h1 className="space-y-3 text-2xl text-lime-500 subpixel-antialiased font-stretch-semi-expanded font-sans">welcome to <span className="font-bold text-2xl text-lime-700">Fauxcall</span>, {session.user.nickname}!</h1>
+				
 				<p>
-					If you stop speaking or say the codeword, these contacts will be
-					notified
+					To begin, set a codeword and emergency contacts. If you stop speaking or say the codeword, these contacts will be
+					notified.
 				</p>
 				{/* form for setting codeword */}
 				<form
@@ -188,27 +151,9 @@ export default function Home() {
 						placeholder="Write down an emergency contact"
 						className="border border-gray-300 rounded-md p-2"
 					/>
-					<input
-						type="text"
-						value={contacts}
-						onChange={(e) => setContacts(e.target.value.split(","))}
-						placeholder="Write down an emergency contact"
-						className="border border-gray-300 rounded-md p-2"
-					/>
-					<input
-						type="text"
-						value={contacts}
-						onChange={(e) => setContacts(e.target.value.split(","))}
-						placeholder="Write down an emergency contact"
-						className="border border-gray-300 rounded-md p-2"
-					/>
-					<input
-						type="text"
-						value={contacts}
-						onChange={(e) => setContacts(e.target.value.split(","))}
-						placeholder="Write down an emergency contact"
-						className="text-input border border-gray-300 rounded-md p-2"
-					/>
+
+
+
 					<button
 						onClick={() => {
 							alert("Adding contact...");

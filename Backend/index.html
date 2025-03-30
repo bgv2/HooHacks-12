@@ -175,11 +175,123 @@
             margin-top: 4px;
             text-align: right;
         }
+        
+        .text-only-indicator {
+            font-size: 0.8em;
+            color: #e74c3c;
+            margin-top: 4px;
+            font-style: italic;
+        }
+        
+        .status-message {
+            text-align: center;
+            padding: 8px;
+            margin: 10px 0;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            color: #666;
+            font-size: 0.9em;
+        }
+        
+        /* Audio visualizer styles */
+        .visualizer-container {
+            width: 100%;
+            height: 120px;
+            margin: 15px 0;
+            border-radius: 10px;
+            overflow: hidden;
+            background-color: #000;
+            position: relative;
+        }
+        
+        #visualizer {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        .visualizer-label {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 0.8em;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        
+        /* Modern switch for visualizer toggle */
+        .switch-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 10px;
+        }
+        
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 50px;
+            height: 24px;
+            margin-left: 10px;
+        }
+        
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 24px;
+        }
+        
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .slider {
+            background-color: #4CAF50;
+        }
+        
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
     </style>
 </head>
 <body>
     <h1>Voice Assistant with CSM & Whisper</h1>
     <div id="conversation"></div>
+    
+    <div class="switch-container">
+        <span>Audio Visualizer</span>
+        <label class="switch">
+            <input type="checkbox" id="visualizerToggle" checked>
+            <span class="slider"></span>
+        </label>
+    </div>
+    
+    <div class="visualizer-container" id="visualizerContainer">
+        <canvas id="visualizer"></canvas>
+        <div class="visualizer-label" id="visualizerLabel">Listening...</div>
+    </div>
     
     <div id="controls">
         <button id="recordButton">Hold to Speak</button>
@@ -201,26 +313,79 @@
         const conversation = document.getElementById('conversation');
         const status = document.getElementById('status');
         const audioWave = document.getElementById('audioWave');
+        const visualizerToggle = document.getElementById('visualizerToggle');
+        const visualizerContainer = document.getElementById('visualizerContainer');
+        const visualizerLabel = document.getElementById('visualizerLabel');
+        const canvas = document.getElementById('visualizer');
+        const canvasCtx = canvas.getContext('2d');
         
         let mediaRecorder;
         let audioChunks = [];
         let isRecording = false;
         let audioSendInterval;
         let sessionActive = false;
+        let reconnectAttempts = 0;
+        let audioStream = null;
+        let audioAnalyser = null;
+        let visualizerActive = true;
+        let visualizerAnimationId = null;
+        let audioBufferSource = null;
         
         // Initialize audio context
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Set up canvas size
+        function setupCanvas() {
+            canvas.width = visualizerContainer.offsetWidth;
+            canvas.height = visualizerContainer.offsetHeight;
+        }
+        
+        // Handle visualizer toggle
+        visualizerToggle.addEventListener('change', function() {
+            visualizerActive = this.checked;
+            visualizerContainer.style.display = visualizerActive ? 'block' : 'none';
+            
+            if (!visualizerActive && visualizerAnimationId) {
+                cancelAnimationFrame(visualizerAnimationId);
+                visualizerAnimationId = null;
+            } else if (visualizerActive && audioAnalyser) {
+                drawVisualizer();
+            }
+        });
         
         // Connect to server
         socket.on('connect', () => {
             status.textContent = 'Connected to server';
             sessionActive = true;
+            reconnectAttempts = 0;
+            
+            if (conversation.children.length > 0) {
+                addStatusMessage("Reconnected to server");
+            }
         });
         
         socket.on('disconnect', () => {
             status.textContent = 'Disconnected from server';
             sessionActive = false;
+            
+            addStatusMessage("Disconnected from server. Attempting to reconnect...");
+            
+            // Attempt to reconnect
+            tryReconnect();
         });
+        
+        function tryReconnect() {
+            if (reconnectAttempts < 5) {
+                reconnectAttempts++;
+                setTimeout(() => {
+                    if (!sessionActive) {
+                        socket.connect();
+                    }
+                }, 1000 * reconnectAttempts);
+            } else {
+                addStatusMessage("Failed to reconnect. Please refresh the page.");
+            }
+        }
         
         socket.on('ready', (data) => {
             status.textContent = data.message;
@@ -230,34 +395,87 @@
         socket.on('transcription', (data) => {
             addMessage('user', data.text);
             status.textContent = 'Assistant is thinking...';
+            visualizerLabel.textContent = 'Processing...';
         });
         
         socket.on('audio_response', (data) => {
             // Play audio
             status.textContent = 'Playing response...';
+            visualizerLabel.textContent = 'Assistant speaking...';
+            
+            // Create audio element
             const audio = new Audio('data:audio/wav;base64,' + data.audio);
+            
+            // Visualize assistant audio if visualizer is active
+            if (visualizerActive) {
+                visualizeResponseAudio(audio);
+            }
             
             audio.onended = () => {
                 status.textContent = 'Ready to record';
+                visualizerLabel.textContent = 'Listening...';
+                if (audioBufferSource) {
+                    audioBufferSource.disconnect();
+                    audioBufferSource = null;
+                }
             };
             
             audio.onerror = () => {
                 status.textContent = 'Error playing audio';
+                visualizerLabel.textContent = 'Listening...';
                 console.error('Error playing audio response');
             };
             
             audio.play().catch(err => {
                 status.textContent = 'Error playing audio: ' + err.message;
+                visualizerLabel.textContent = 'Listening...';
                 console.error('Error playing audio:', err);
             });
             
             // Display text
-            addMessage('bot', data.text);
+            addMessage('bot', data.text, false);
+        });
+        
+        // Visualize response audio
+        async function visualizeResponseAudio(audioElement) {
+            try {
+                // Create media element source
+                const audioSource = audioContext.createMediaElementSource(audioElement);
+                
+                // Create analyser
+                const analyser = audioContext.createAnalyser();
+                analyser.fftSize = 2048;
+                
+                // Connect
+                audioSource.connect(analyser);
+                analyser.connect(audioContext.destination);
+                
+                // Store reference
+                audioAnalyser = analyser;
+                
+                // Start visualization
+                drawVisualizer();
+            } catch (e) {
+                console.error('Error setting up audio visualization:', e);
+            }
+        }
+        
+        // Handle text-only responses when audio generation isn't available
+        socket.on('text_response', (data) => {
+            status.textContent = 'Received text response';
+            visualizerLabel.textContent = 'Text only (no audio)';
+            addMessage('bot', data.text, true);
+            setTimeout(() => {
+                status.textContent = 'Ready to record';
+                visualizerLabel.textContent = 'Listening...';
+            }, 1000);
         });
         
         socket.on('error', (data) => {
             status.textContent = 'Error: ' + data.message;
+            visualizerLabel.textContent = 'Error occurred';
             console.error('Server error:', data.message);
+            addStatusMessage("Error: " + data.message);
         });
         
         function setupAudioRecording() {
@@ -267,9 +485,29 @@
                 return;
             }
             
+            // Set up canvas
+            setupCanvas();
+            
             // Get user media
             navigator.mediaDevices.getUserMedia({ audio: true })
                 .then(stream => {
+                    // Store stream for visualizer
+                    audioStream = stream;
+                    
+                    // Create audio analyser for visualization
+                    const source = audioContext.createMediaStreamSource(stream);
+                    const analyser = audioContext.createAnalyser();
+                    analyser.fftSize = 2048;
+                    source.connect(analyser);
+                    
+                    // Store analyser for visualization
+                    audioAnalyser = analyser;
+                    
+                    // Start visualizer if enabled
+                    if (visualizerActive) {
+                        drawVisualizer();
+                    }
+                    
                     // Setup recording with better audio quality
                     const options = { 
                         mimeType: 'audio/webm',
@@ -292,12 +530,6 @@
                     mediaRecorder.onstop = () => {
                         processRecording();
                     };
-                    
-                    // Create audio analyzer for visualization
-                    const source = audioContext.createMediaStreamSource(stream);
-                    const analyzer = audioContext.createAnalyser();
-                    analyzer.fftSize = 2048;
-                    source.connect(analyzer);
                     
                     // Setup button handlers with better touch handling
                     recordButton.addEventListener('mousedown', startRecording);
@@ -322,6 +554,57 @@
                 });
         }
         
+        // Draw visualizer animation
+        function drawVisualizer() {
+            if (!visualizerActive || !audioAnalyser) {
+                return;
+            }
+            
+            visualizerAnimationId = requestAnimationFrame(drawVisualizer);
+            
+            const bufferLength = audioAnalyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            
+            // Get frequency data
+            audioAnalyser.getByteFrequencyData(dataArray);
+            
+            // Clear canvas
+            canvasCtx.fillStyle = '#000';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw visualization based on audio data
+            const barWidth = (canvas.width / bufferLength) * 2.5;
+            let x = 0;
+            
+            // Choose color based on state
+            let gradient;
+            if (isRecording) {
+                // Red gradient for recording
+                gradient = canvasCtx.createLinearGradient(0, 0, 0, canvas.height);
+                gradient.addColorStop(0, 'rgba(255, 0, 0, 0.8)');
+                gradient.addColorStop(1, 'rgba(255, 80, 80, 0.2)');
+            } else if (visualizerLabel.textContent === 'Assistant speaking...') {
+                // Blue gradient for assistant
+                gradient = canvasCtx.createLinearGradient(0, 0, 0, canvas.height);
+                gradient.addColorStop(0, 'rgba(0, 120, 255, 0.8)');
+                gradient.addColorStop(1, 'rgba(80, 160, 255, 0.2)');
+            } else {
+                // Green gradient for listening
+                gradient = canvasCtx.createLinearGradient(0, 0, 0, canvas.height);
+                gradient.addColorStop(0, 'rgba(0, 200, 80, 0.8)');
+                gradient.addColorStop(1, 'rgba(80, 255, 120, 0.2)');
+            }
+            
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = (dataArray[i] / 255) * canvas.height;
+                
+                canvasCtx.fillStyle = gradient;
+                canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                
+                x += barWidth + 1;
+            }
+        }
+        
         function startRecording() {
             if (!isRecording && sessionActive) {
                 audioChunks = [];
@@ -329,6 +612,7 @@
                 recordButton.classList.add('recording');
                 recordButton.textContent = 'Release to Stop';
                 status.textContent = 'Recording...';
+                visualizerLabel.textContent = 'Recording...';
                 audioWave.classList.remove('hidden');
                 isRecording = true;
                 
@@ -350,6 +634,7 @@
                 recordButton.classList.remove('recording');
                 recordButton.textContent = 'Hold to Speak';
                 status.textContent = 'Processing speech...';
+                visualizerLabel.textContent = 'Processing...';
                 audioWave.classList.add('hidden');
                 isRecording = false;
             }
@@ -358,6 +643,7 @@
         function processRecording() {
             if (audioChunks.length === 0) {
                 status.textContent = 'No audio recorded';
+                visualizerLabel.textContent = 'Listening...';
                 return;
             }
             
@@ -380,11 +666,13 @@
                 } catch (e) {
                     console.error('Error processing audio:', e);
                     status.textContent = 'Error processing audio';
+                    visualizerLabel.textContent = 'Error';
                 }
             };
             
             fileReader.onerror = () => {
                 status.textContent = 'Error reading audio data';
+                visualizerLabel.textContent = 'Error';
             };
             
             fileReader.readAsArrayBuffer(audioBlob);
@@ -403,7 +691,7 @@
             return float32Array;
         }
         
-        function addMessage(sender, text) {
+        function addMessage(sender, text, textOnly = false) {
             const containerDiv = document.createElement('div');
             containerDiv.className = sender === 'user' ? 'message-container user-message-container' : 'message-container bot-message-container';
             
@@ -422,10 +710,37 @@
                 infoDiv.className = 'transcription-info';
                 infoDiv.textContent = 'Transcribed with Whisper';
                 containerDiv.appendChild(infoDiv);
+            } else if (textOnly) {
+                // Add indicator for text-only response
+                const textOnlyDiv = document.createElement('div');
+                textOnlyDiv.className = 'text-only-indicator';
+                textOnlyDiv.textContent = 'Text-only response (audio unavailable)';
+                containerDiv.appendChild(textOnlyDiv);
             }
             
             conversation.appendChild(containerDiv);
             conversation.scrollTop = conversation.scrollHeight;
+        }
+        
+        function addStatusMessage(message) {
+            const statusDiv = document.createElement('div');
+            statusDiv.className = 'status-message';
+            statusDiv.textContent = message;
+            conversation.appendChild(statusDiv);
+            conversation.scrollTop = conversation.scrollHeight;
+            
+            // Auto-remove status messages after 10 seconds
+            setTimeout(() => {
+                if (conversation.contains(statusDiv)) {
+                    statusDiv.style.opacity = '0';
+                    statusDiv.style.transition = 'opacity 0.5s';
+                    setTimeout(() => {
+                        if (conversation.contains(statusDiv)) {
+                            conversation.removeChild(statusDiv);
+                        }
+                    }, 500);
+                }
+            }, 10000);
         }
         
         function arrayBufferToBase64(buffer) {
@@ -450,6 +765,34 @@
             if (socket && socket.connected) {
                 socket.disconnect();
             }
+            
+            if (visualizerAnimationId) {
+                cancelAnimationFrame(visualizerAnimationId);
+            }
+        });
+        
+        // Add a reload button for debugging
+        const reloadButton = document.createElement('button');
+        reloadButton.textContent = '🔄 Reload';
+        reloadButton.style.position = 'fixed';
+        reloadButton.style.bottom = '10px';
+        reloadButton.style.right = '10px';
+        reloadButton.style.padding = '5px 10px';
+        reloadButton.style.fontSize = '12px';
+        reloadButton.style.backgroundColor = '#f5f5f5';
+        reloadButton.style.border = '1px solid #ddd';
+        reloadButton.style.borderRadius = '4px';
+        reloadButton.style.cursor = 'pointer';
+        
+        reloadButton.addEventListener('click', () => {
+            window.location.reload();
+        });
+        
+        document.body.appendChild(reloadButton);
+        
+        // Handle window resize to update canvas size
+        window.addEventListener('resize', () => {
+            setupCanvas();
         });
     </script>
 </body>

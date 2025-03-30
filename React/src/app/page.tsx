@@ -78,7 +78,7 @@ export default function Home() {
 			<div className="space-y-7  items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
 				
 				<h1
-  className="space-y-3 text-4xl text-lime-500 subpixel-antialiased animate-fadeIn"
+  className="space-y-3 text-4xl text-lime-500 subpixel-antialiased animate-fadeIn text-center font-stretch-semi-expanded"
   style={{ animationDelay: "0s", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}
 >
   welcome to Fauxcall
@@ -147,7 +147,7 @@ export default function Home() {
 
 	return (
 		
-		<div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
+		<div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-10 sm:p-20 font-[family-name:var(--font-geist-sans)]">
 			<main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
 			
 
@@ -169,12 +169,12 @@ export default function Home() {
 						placeholder="Codeword"
 						className="border border-gray-300 rounded-md p-2"
 					/>
-					<button
+					{/* <button
 						className="bg-blue-500 text-white font-semibold font-lg rounded-md p-2"
 						type="submit"
 					>
 						Set codeword
-					</button>
+					</button> */}
 				</form>
 				{/* form for adding contacts */}
 				<form
@@ -198,15 +198,15 @@ export default function Home() {
 						font-semibold font-lg rounded-md p-2"
 						type="button"
 					>
-						Add
+						Add Contact
 					</button>
-
+					<hr />
 					<button
 						type="button"
 						onClick={saveToDB}
 						className="bg-slate-500 text-yellow-300 text-stretch-50% font-lg rounded-md p-2"
 					>
-						Save
+						Save Settings
 					</button>
 				</form>
 				<div>
@@ -217,7 +217,7 @@ export default function Home() {
 					</a>
 				</div>
 				<p>
-					<a href="/auth/logout">
+					<a href="/auth/logout" className="font-semibold font-lg rounded-md p-2">
 						<button>Log out</button>
 					</a>
 				</p>

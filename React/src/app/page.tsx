@@ -17,14 +17,14 @@ export default async function Home() {
 			<div className="space-y-7 bg-indigo-800 items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
 				<main className="space-x-2 flex flex-row gap-[32px] row-start-2 items-center sm:items-start">
 					<a href="/auth/login?screen_hint=signup">
-						<button className="w-16 bg-indigo-900 text-green-300">Sign up</button>
+						<button className="box-content w-32 border-2 h-16 text-2xl bg-indigo-900 text-green-300">Sign up</button>
 					</a>
 					<a href="/auth/login">
-						<button className = "w-16 bg-indigo-500 text-green-400">Log in</button>
+						<button className = "box-content w-32 border-2 h-16 text-2xl bg-indigo-900 text-green-400">Log in</button>
 					</a>
 				</main>
-				<h1 className="text-3xl font-serif">fauxcall</h1>
-				<h2>set emergency contacts</h2>
+				<h1 className="space-y-3 text-6xl text-blue-500 subpixel-antialiased font-stretch-semi-expanded font-serif">Fauxcall</h1>
+				<h2 className="space-y-3 text-6x1 text-red-300 antialiased  font-mono">Set emergency contacts</h2>
 				<p>if you stop speaking or say the codeword, these contacts will be notified</p>
 				{/* form for setting codeword */}
 				<form className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start" onSubmit={(e) => e.preventDefault()}>

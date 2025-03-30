@@ -15,14 +15,10 @@ from watermarking import CSM_1B_GH_WATERMARK, load_watermarker, watermark
 class Segment:
     speaker: int
     text: str
-    # (num_samples,), sample_rate = 24_000
     audio: torch.Tensor
 
 
 def load_llama3_tokenizer():
-    """
-    https://github.com/huggingface/transformers/issues/22794#issuecomment-2092623992
-    """
     tokenizer_name = "meta-llama/Llama-3.2-1B"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
     bos = tokenizer.bos_token
@@ -78,10 +74,8 @@ class Generator:
         frame_tokens = []
         frame_masks = []
 
-        # (K, T)
         audio = audio.to(self.device)
         audio_tokens = self._audio_tokenizer.encode(audio.unsqueeze(0).unsqueeze(0))[0]
-        # add EOS frame
         eos_frame = torch.zeros(audio_tokens.size(0), 1).to(self.device)
         audio_tokens = torch.cat([audio_tokens, eos_frame], dim=1)
 
@@ -96,10 +90,6 @@ class Generator:
         return torch.cat(frame_tokens, dim=0), torch.cat(frame_masks, dim=0)
 
     def _tokenize_segment(self, segment: Segment) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Returns:
-            (seq_len, 33), (seq_len, 33)
-        """
         text_tokens, text_masks = self._tokenize_text_segment(segment.text, segment.speaker)
         audio_tokens, audio_masks = self._tokenize_audio(segment.audio)
 
@@ -146,7 +136,7 @@ class Generator:
         for _ in range(max_generation_len):
             sample = self._model.generate_frame(curr_tokens, curr_tokens_mask, curr_pos, temperature, topk)
             if torch.all(sample == 0):
-                break  # eos
+                break
 
             samples.append(sample)
 
@@ -158,10 +148,6 @@ class Generator:
 
         audio = self._audio_tokenizer.decode(torch.stack(samples).permute(1, 2, 0)).squeeze(0).squeeze(0)
 
-        # This applies an imperceptible watermark to identify audio as AI-generated.
-        # Watermarking ensures transparency, dissuades misuse, and enables traceability.
-        # Please be a responsible AI citizen and keep the watermarking in place.
-        # If using CSM 1B in another application, use your own private key and keep it secret.
         audio, wm_sample_rate = watermark(self._watermarker, audio, self.sample_rate, CSM_1B_GH_WATERMARK)
         audio = torchaudio.functional.resample(audio, orig_freq=wm_sample_rate, new_freq=self.sample_rate)
 

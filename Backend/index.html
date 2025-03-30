@@ -1,0 +1,212 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Conversation Bot</title>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #conversation {
+            height: 400px;
+            border: 1px solid #ccc;
+            padding: 15px;
+            margin-bottom: 20px;
+            overflow-y: auto;
+        }
+        .user-message {
+            background-color: #e1f5fe;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            align-self: flex-end;
+        }
+        .bot-message {
+            background-color: #f1f1f1;
+            padding: 10px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        #controls {
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #recordButton {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        #recordButton.recording {
+            background-color: #f44336;
+        }
+        #status {
+            margin-top: 10px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <h1>Audio Conversation Bot</h1>
+    <div id="conversation"></div>
+    <div id="controls">
+        <button id="recordButton">Hold to Speak</button>
+    </div>
+    <div id="status">Not connected</div>
+
+    <script>
+        const socket = io();
+        const recordButton = document.getElementById('recordButton');
+        const conversation = document.getElementById('conversation');
+        const status = document.getElementById('status');
+        
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        
+        // Initialize audio context and analyzer
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Connect to server
+        socket.on('connect', () => {
+            status.textContent = 'Connected to server';
+        });
+        
+        socket.on('ready', (data) => {
+            status.textContent = data.message;
+            setupAudioRecording();
+        });
+        
+        socket.on('transcription', (data) => {
+            addMessage('user', data.text);
+        });
+        
+        socket.on('audio_response', (data) => {
+            // Play audio
+            const audio = new Audio('data:audio/wav;base64,' + data.audio);
+            audio.play();
+            
+            // Display text
+            addMessage('bot', data.text);
+        });
+        
+        socket.on('error', (data) => {
+            status.textContent = data.message;
+            console.error(data.message);
+        });
+        
+        function setupAudioRecording() {
+            // Get user media
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    // Setup recording
+                    mediaRecorder = new MediaRecorder(stream);
+                    
+                    mediaRecorder.ondataavailable = event => {
+                        if (event.data.size > 0) {
+                            audioChunks.push(event.data);
+                        }
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        audioChunks = [];
+                        
+                        // Convert to Float32Array for sending
+                        const fileReader = new FileReader();
+                        fileReader.onloadend = () => {
+                            const arrayBuffer = fileReader.result;
+                            const floatArray = new Float32Array(arrayBuffer);
+                            
+                            // Convert to base64
+                            const base64String = arrayBufferToBase64(floatArray.buffer);
+                            socket.emit('audio_chunk', { audio: base64String });
+                        };
+                        fileReader.readAsArrayBuffer(audioBlob);
+                        
+                        socket.emit('stop_speaking');
+                        isRecording = false;
+                    };
+                    
+                    // Setup audio analyzer for chunking and VAD
+                    const source = audioContext.createMediaStreamSource(stream);
+                    const analyzer = audioContext.createAnalyser();
+                    analyzer.fftSize = 2048;
+                    source.connect(analyzer);
+                    
+                    // Setup button handlers
+                    recordButton.addEventListener('mousedown', startRecording);
+                    recordButton.addEventListener('touchstart', startRecording);
+                    recordButton.addEventListener('mouseup', stopRecording);
+                    recordButton.addEventListener('touchend', stopRecording);
+                    recordButton.addEventListener('mouseleave', stopRecording);
+                    
+                    status.textContent = 'Ready to record';
+                })
+                .catch(err => {
+                    status.textContent = 'Error accessing microphone: ' + err.message;
+                    console.error('Error accessing microphone:', err);
+                });
+        }
+        
+        function startRecording() {
+            if (!isRecording) {
+                audioChunks = [];
+                mediaRecorder.start(100); // Collect data in 100ms chunks
+                recordButton.classList.add('recording');
+                recordButton.textContent = 'Release to Stop';
+                status.textContent = 'Recording...';
+                isRecording = true;
+                
+                socket.emit('start_speaking');
+                
+                // Start sending audio chunks periodically
+                audioSendInterval = setInterval(() => {
+                    if (mediaRecorder.state === 'recording') {
+                        mediaRecorder.requestData(); // Force ondataavailable to fire
+                    }
+                }, 300); // Send every 300ms
+            }
+        }
+        
+        function stopRecording() {
+            if (isRecording) {
+                clearInterval(audioSendInterval);
+                mediaRecorder.stop();
+                recordButton.classList.remove('recording');
+                recordButton.textContent = 'Hold to Speak';
+                status.textContent = 'Processing...';
+            }
+        }
+        
+        function addMessage(sender, text) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = sender === 'user' ? 'user-message' : 'bot-message';
+            messageDiv.textContent = text;
+            conversation.appendChild(messageDiv);
+            conversation.scrollTop = conversation.scrollHeight;
+        }
+        
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return window.btoa(binary);
+        }
+    </script>
+</body>
+</html>

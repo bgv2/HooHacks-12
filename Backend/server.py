@@ -308,8 +308,8 @@ def process_speech(audio_tensor: torch.Tensor, client_id: str) -> str:
         temp_path = os.path.join(base_dir, f"temp_{time.time()}.wav")
         torchaudio.save(temp_path, audio_tensor.unsqueeze(0).cpu(), generator.sample_rate)
         
-        # Perform speech recognition
-        result = speech_recognizer(temp_path)
+        # Perform speech recognition - using input_features instead of inputs
+        result = speech_recognizer(temp_path, input_features=None)  # input_features=None forces use of the correct parameter name
         transcription = result["text"]
         
         # Clean up temp file
@@ -650,7 +650,7 @@ def process_complete_utterance(client_id, client, speaker_id, is_incomplete=Fals
         # Combine audio chunks
         full_audio = torch.cat(client['streaming_buffer'], dim=0)
         
-        # Process audio to generate a response (no speech recognition)
+        # Process audio to generate a response (using speech recognition)
         generated_text = process_speech(full_audio, client_id)
         
         # Add suffix for incomplete utterances
@@ -706,16 +706,28 @@ def process_complete_utterance(client_id, client, speaker_id, is_incomplete=Fals
                     )
                     client['context_segments'].append(ai_segment)
                     
-                    # Convert audio to base64 and send back to client
-                    audio_base64 = encode_audio_data(audio_tensor)
-                    emit('audio_response', {
-                        'type': 'audio_response',
-                        'text': response_text,
-                        'audio': audio_base64
-                    }, room=client_id)
-                    
-                    logger.info(f"[{client_id[:8]}] Audio response sent")
-                    
+                    # CHANGE HERE: Use the streaming function instead of sending all at once
+                    # Check if the audio is short enough to send at once or if it should be streamed
+                    if audio_tensor.size(0) < generator.sample_rate * 2:  # Less than 2 seconds
+                        # For short responses, just send in one go for better responsiveness
+                        audio_base64 = encode_audio_data(audio_tensor)
+                        emit('audio_response', {
+                            'type': 'audio_response',
+                            'text': response_text,
+                            'audio': audio_base64
+                        }, room=client_id)
+                        logger.info(f"[{client_id[:8]}] Short audio response sent in one piece")
+                    else:
+                        # For longer responses, use streaming
+                        logger.info(f"[{client_id[:8]}] Using streaming for audio response")
+                        # Start a new thread for streaming to avoid blocking the main thread
+                        import threading
+                        stream_thread = threading.Thread(
+                            target=stream_audio_to_client,
+                            args=(client_id, audio_tensor, response_text, ai_speaker_id)
+                        )
+                        stream_thread.start()
+                        
                 except Exception as e:
                     logger.error(f"Error generating audio response: {e}")
                     emit('error', {

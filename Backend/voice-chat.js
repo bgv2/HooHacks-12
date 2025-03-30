@@ -50,6 +50,20 @@ let canvasContext = null;
 let visualizerBufferLength = 0;
 let visualizerDataArray = null;
 
+// New state variables to track incremental audio streaming
+const streamingAudio = {
+    messageElement: null,
+    audioElement: null,
+    chunks: [],
+    totalChunks: 0,
+    receivedChunks: 0,
+    text: '',
+    mediaSource: null,
+    sourceBuffer: null,
+    audioContext: null,
+    complete: false
+};
+
 // Initialize the application
 function initializeApp() {
     // Initialize the UI elements
@@ -116,6 +130,12 @@ function setupSocketConnection() {
     state.socket.on('transcription', handleTranscription);
     state.socket.on('context_updated', handleContextUpdate);
     state.socket.on('streaming_status', handleStreamingStatus);
+    
+    // New event handlers for incremental audio streaming
+    state.socket.on('audio_response_start', handleAudioResponseStart);
+    state.socket.on('audio_response_chunk', handleAudioResponseChunk);
+    state.socket.on('audio_response_complete', handleAudioResponseComplete);
+    state.socket.on('processing_status', handleProcessingStatus);
 }
 
 // Setup event listeners
@@ -294,12 +314,8 @@ function stopStreaming(notifyServer = true) {
 function handleAudioProcess(event) {
     const inputData = event.inputBuffer.getChannelData(0);
     
-    // Log audio buffer statistics
-    console.log(`Audio buffer: length=${inputData.length}, sample rate=${state.audioContext.sampleRate}Hz`);
-    
     // Calculate audio energy (volume level)
     const energy = calculateAudioEnergy(inputData);
-    console.log(`Energy: ${energy.toFixed(6)}, threshold: ${state.silenceThreshold}`);
     
     // Update energy window for averaging
     updateEnergyWindow(energy);
@@ -309,7 +325,11 @@ function handleAudioProcess(event) {
     
     // Determine if audio is silent
     const isSilent = avgEnergy < state.silenceThreshold;
-    console.log(`Silent: ${isSilent ? 'Yes' : 'No'}, avg energy: ${avgEnergy.toFixed(6)}`);
+    
+    // Debug logging only if significant changes in audio patterns
+    if (Math.random() < 0.05) { // Log only 5% of frames to avoid console spam
+        console.log(`Audio: len=${inputData.length}, energy=${energy.toFixed(4)}, avg=${avgEnergy.toFixed(4)}, silent=${isSilent}`);
+    }
     
     // Handle speech state based on silence
     handleSpeechState(isSilent);
@@ -319,7 +339,6 @@ function handleAudioProcess(event) {
         // Create a resampled version at 24kHz for the server
         // Most WebRTC audio is 48kHz, but we want 24kHz for the model
         const resampledData = downsampleBuffer(inputData, state.audioContext.sampleRate, 24000);
-        console.log(`Resampled audio: ${state.audioContext.sampleRate}Hz → 24000Hz, new length: ${resampledData.length}`);
         
         // Send the audio chunk to the server
         sendAudioChunk(resampledData, state.currentSpeaker);
@@ -846,6 +865,206 @@ function downsampleBuffer(buffer, originalSampleRate, targetSampleRate) {
     
     return result;
 }
+
+// Handle processing status updates
+function handleProcessingStatus(data) {
+    console.log('Processing status update:', data);
+    
+    // Show processing status in UI
+    if (data.status === 'generating_audio') {
+        elements.streamButton.innerHTML = '<i class="fas fa-cog fa-spin"></i> Processing...';
+        elements.streamButton.classList.add('processing');
+        elements.streamButton.classList.remove('recording');
+        
+        // Show message to user
+        addSystemMessage(data.message || 'Processing your request...');
+    }
+}
+
+// Handle the start of an audio streaming response
+function handleAudioResponseStart(data) {
+    console.log('Audio response starting:', data);
+    
+    // Reset streaming audio state
+    streamingAudio.chunks = [];
+    streamingAudio.totalChunks = data.total_chunks;
+    streamingAudio.receivedChunks = 0;
+    streamingAudio.text = data.text;
+    streamingAudio.complete = false;
+    
+    // Create message container now, so we can update it as chunks arrive
+    const messageElement = document.createElement('div');
+    messageElement.className = 'message ai processing';
+    
+    // Add text content if available
+    if (data.text) {
+        const textElement = document.createElement('p');
+        textElement.textContent = data.text;
+        messageElement.appendChild(textElement);
+    }
+    
+    // Create audio element (will be populated as chunks arrive)
+    const audioElement = document.createElement('audio');
+    audioElement.controls = true;
+    audioElement.className = 'audio-player';
+    audioElement.textContent = 'Audio is being generated...';
+    messageElement.appendChild(audioElement);
+    
+    // Add timestamp
+    const timeElement = document.createElement('span');
+    timeElement.className = 'message-time';
+    timeElement.textContent = new Date().toLocaleTimeString();
+    messageElement.appendChild(timeElement);
+    
+    // Add loading indicator
+    const loadingElement = document.createElement('div');
+    loadingElement.className = 'loading-indicator';
+    loadingElement.innerHTML = '<div class="loading-spinner"></div><span>Generating audio response...</span>';
+    messageElement.appendChild(loadingElement);
+    
+    // Add to conversation
+    elements.conversation.appendChild(messageElement);
+    
+    // Auto-scroll to bottom
+    elements.conversation.scrollTop = elements.conversation.scrollHeight;
+    
+    // Store elements for later updates
+    streamingAudio.messageElement = messageElement;
+    streamingAudio.audioElement = audioElement;
+}
+
+// Handle an incoming audio chunk
+function handleAudioResponseChunk(data) {
+    console.log(`Received audio chunk ${data.chunk_index + 1}/${data.total_chunks}`);
+    
+    // Store the chunk
+    streamingAudio.chunks[data.chunk_index] = data.audio;
+    streamingAudio.receivedChunks++;
+    
+    // Update progress in the UI
+    if (streamingAudio.messageElement) {
+        const loadingElement = streamingAudio.messageElement.querySelector('.loading-indicator span');
+        if (loadingElement) {
+            loadingElement.textContent = `Generating audio response... ${Math.round((streamingAudio.receivedChunks / data.total_chunks) * 100)}%`;
+        }
+    }
+    
+    // If this is the first chunk, start playing it immediately for faster response
+    if (data.chunk_index === 0 && streamingAudio.audioElement && elements.autoPlayResponses && elements.autoPlayResponses.checked) {
+        try {
+            streamingAudio.audioElement.src = data.audio;
+            streamingAudio.audioElement.play().catch(err => console.warn('Auto-play failed:', err));
+        } catch (e) {
+            console.error('Error playing first chunk:', e);
+        }
+    }
+    
+    // If this is the last chunk or we've received all chunks, finalize the audio
+    if (data.is_last || streamingAudio.receivedChunks >= data.total_chunks) {
+        finalizeStreamingAudio();
+    }
+}
+
+// Handle completion of audio streaming
+function handleAudioResponseComplete(data) {
+    console.log('Audio response complete:', data);
+    streamingAudio.complete = true;
+    
+    // Make sure we finalize the audio even if some chunks were missed
+    finalizeStreamingAudio();
+    
+    // Update UI to normal state
+    if (state.isStreaming) {
+        elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Listening...';
+        elements.streamButton.classList.add('recording');
+        elements.streamButton.classList.remove('processing');
+    }
+}
+
+// Finalize streaming audio by combining chunks and updating the UI
+function finalizeStreamingAudio() {
+    if (!streamingAudio.messageElement || streamingAudio.chunks.length === 0) {
+        return;
+    }
+    
+    try {
+        // For more sophisticated audio streaming, you would need to properly concatenate
+        // the WAV files, but for now we'll use the last chunk as the complete audio
+        // since it should contain the entire response due to how the server is implementing it
+        const lastChunkIndex = streamingAudio.chunks.length - 1;
+        const audioData = streamingAudio.chunks[lastChunkIndex] || streamingAudio.chunks[0];
+        
+        // Update the audio element with the complete audio
+        if (streamingAudio.audioElement) {
+            streamingAudio.audioElement.src = audioData;
+            
+            // Auto-play if enabled and not already playing
+            if (elements.autoPlayResponses && elements.autoPlayResponses.checked && 
+                streamingAudio.audioElement.paused) {
+                streamingAudio.audioElement.play()
+                    .catch(err => {
+                        console.warn('Auto-play failed:', err);
+                        addSystemMessage('Auto-play failed. Please click play to hear the response.');
+                    });
+            }
+        }
+        
+        // Remove loading indicator and processing class
+        if (streamingAudio.messageElement) {
+            const loadingElement = streamingAudio.messageElement.querySelector('.loading-indicator');
+            if (loadingElement) {
+                streamingAudio.messageElement.removeChild(loadingElement);
+            }
+            streamingAudio.messageElement.classList.remove('processing');
+        }
+        
+        console.log('Audio response finalized and ready for playback');
+    } catch (e) {
+        console.error('Error finalizing streaming audio:', e);
+    }
+    
+    // Reset streaming audio state
+    streamingAudio.chunks = [];
+    streamingAudio.totalChunks = 0;
+    streamingAudio.receivedChunks = 0;
+    streamingAudio.messageElement = null;
+    streamingAudio.audioElement = null;
+}
+
+// Add CSS styles for new UI elements
+document.addEventListener('DOMContentLoaded', function() {
+    // Add styles for processing state
+    const style = document.createElement('style');
+    style.textContent = `
+        .message.processing {
+            opacity: 0.8;
+        }
+        
+        .loading-indicator {
+            display: flex;
+            align-items: center;
+            margin-top: 8px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        
+        .loading-spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid #ddd;
+            border-top: 2px solid var(--primary-color);
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    `;
+    document.head.appendChild(style);
+});
 
 // Initialize the application when DOM is fully loaded
 document.addEventListener('DOMContentLoaded', initializeApp);

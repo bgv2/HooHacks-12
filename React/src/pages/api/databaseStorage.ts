@@ -10,6 +10,11 @@ async function connectToDatabase() {
     // Only connect if not already connected
     await mongoose.connect(uri, clientOptions);
     console.log("Connected to MongoDB!");
+    mongoose.model("User", new mongoose.Schema({
+        email: { type: String, required: true, unique: true },
+        codeword: { type: String, required: true },
+        contacts: [{ type: String }],
+        }));
   }
 }
 

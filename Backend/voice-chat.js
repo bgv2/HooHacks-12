@@ -1,7 +1,7 @@
 /**
- * Sesame AI Voice Chat Client
+ * CSM AI Voice Chat Client
  * 
- * A web client that connects to a Sesame AI voice chat server and enables 
+ * A web client that connects to a CSM AI voice chat server and enables 
  * real-time voice conversation with an AI assistant.
  */
 
@@ -13,19 +13,19 @@ const CLIENT_SILENCE_DURATION_MS = 750;
 
 // DOM elements
 const elements = {
-    conversation: null,
-    streamButton: null,
-    clearButton: null,
-    thresholdSlider: null,
-    thresholdValue: null,
-    visualizerCanvas: null,
-    visualizerLabel: null,
-    volumeLevel: null,
-    statusDot: null,
-    statusText: null,
-    speakerSelection: null,
-    autoPlayResponses: null,
-    showVisualizer: null
+    conversation: document.getElementById('conversation'),
+    streamButton: document.getElementById('streamButton'),
+    clearButton: document.getElementById('clearButton'),
+    thresholdSlider: document.getElementById('thresholdSlider'),
+    thresholdValue: document.getElementById('thresholdValue'),
+    visualizerCanvas: document.getElementById('audioVisualizer'),
+    visualizerLabel: document.getElementById('visualizerLabel'),
+    volumeLevel: document.getElementById('volumeLevel'),
+    statusDot: document.getElementById('statusDot'),
+    statusText: document.getElementById('statusText'),
+    speakerSelection: document.getElementById('speakerSelect'),
+    autoPlayResponses: document.getElementById('autoPlayResponses'),
+    showVisualizer: document.getElementById('showVisualizer')
 };
 
 // Application state
@@ -50,7 +50,7 @@ let canvasContext = null;
 let visualizerBufferLength = 0;
 let visualizerDataArray = null;
 
-// New state variables to track incremental audio streaming
+// Audio streaming state
 const streamingAudio = {
     messageElement: null,
     audioElement: null,
@@ -58,9 +58,6 @@ const streamingAudio = {
     totalChunks: 0,
     receivedChunks: 0,
     text: '',
-    mediaSource: null,
-    sourceBuffer: null,
-    audioContext: null,
     complete: false
 };
 
@@ -79,25 +76,15 @@ function initializeApp() {
     setupVisualizer();
     
     // Show welcome message
-    addSystemMessage('Welcome to Sesame AI Voice Chat! Click "Start Conversation" to begin.');
+    addSystemMessage('Welcome to CSM Voice Chat! Click "Start Conversation" to begin.');
 }
 
 // Initialize UI elements
 function initializeUIElements() {
-    // Store references to UI elements
-    elements.conversation = document.getElementById('conversation');
-    elements.streamButton = document.getElementById('streamButton');
-    elements.clearButton = document.getElementById('clearButton');
-    elements.thresholdSlider = document.getElementById('thresholdSlider');
-    elements.thresholdValue = document.getElementById('thresholdValue');
-    elements.visualizerCanvas = document.getElementById('audioVisualizer');
-    elements.visualizerLabel = document.getElementById('visualizerLabel');
-    elements.volumeLevel = document.getElementById('volumeLevel');
-    elements.statusDot = document.getElementById('statusDot');
-    elements.statusText = document.getElementById('statusText');
-    elements.speakerSelection = document.getElementById('speakerSelect'); // Changed to match HTML
-    elements.autoPlayResponses = document.getElementById('autoPlayResponses');
-    elements.showVisualizer = document.getElementById('showVisualizer');
+    // Update threshold display
+    if (elements.thresholdValue) {
+        elements.thresholdValue.textContent = state.silenceThreshold.toFixed(3);
+    }
 }
 
 // Setup Socket.IO connection
@@ -106,36 +93,31 @@ function setupSocketConnection() {
     
     // Connection events
     state.socket.on('connect', () => {
-        console.log('Connected to server');
         updateConnectionStatus(true);
+        addSystemMessage('Connected to server.');
     });
     
     state.socket.on('disconnect', () => {
-        console.log('Disconnected from server');
         updateConnectionStatus(false);
-        
-        // Stop streaming if active
-        if (state.isStreaming) {
-            stopStreaming(false);
-        }
+        addSystemMessage('Disconnected from server.');
+        stopStreaming(false);
     });
     
     state.socket.on('error', (data) => {
-        console.error('Socket error:', data.message);
         addSystemMessage(`Error: ${data.message}`);
+        console.error('Server error:', data.message);
     });
     
     // Register message handlers
-    state.socket.on('audio_response', handleAudioResponse);
     state.socket.on('transcription', handleTranscription);
     state.socket.on('context_updated', handleContextUpdate);
     state.socket.on('streaming_status', handleStreamingStatus);
+    state.socket.on('processing_status', handleProcessingStatus);
     
-    // New event handlers for incremental audio streaming
+    // Handlers for incremental audio streaming
     state.socket.on('audio_response_start', handleAudioResponseStart);
     state.socket.on('audio_response_chunk', handleAudioResponseChunk);
     state.socket.on('audio_response_complete', handleAudioResponseComplete);
-    state.socket.on('processing_status', handleProcessingStatus);
 }
 
 // Setup event listeners
@@ -147,15 +129,19 @@ function setupEventListeners() {
     elements.clearButton.addEventListener('click', clearConversation);
     
     // Threshold slider
-    elements.thresholdSlider.addEventListener('input', updateThreshold);
+    if (elements.thresholdSlider) {
+        elements.thresholdSlider.addEventListener('input', updateThreshold);
+    }
     
     // Speaker selection
     elements.speakerSelection.addEventListener('change', () => {
-        state.currentSpeaker = parseInt(elements.speakerSelection.value, 10);
+        state.currentSpeaker = parseInt(elements.speakerSelection.value);
     });
     
     // Visualizer toggle
-    elements.showVisualizer.addEventListener('change', toggleVisualizerVisibility);
+    if (elements.showVisualizer) {
+        elements.showVisualizer.addEventListener('change', toggleVisualizerVisibility);
+    }
 }
 
 // Setup audio visualizer
@@ -168,20 +154,28 @@ function setupVisualizer() {
     elements.visualizerCanvas.width = elements.visualizerCanvas.offsetWidth;
     elements.visualizerCanvas.height = elements.visualizerCanvas.offsetHeight;
     
-    // Initialize the visualizer
+    // Initialize visualization data array
+    visualizerDataArray = new Uint8Array(128);
+    
+    // Start the visualizer animation
     drawVisualizer();
 }
 
 // Update connection status UI
 function updateConnectionStatus(isConnected) {
-    elements.statusDot.classList.toggle('active', isConnected);
-    elements.statusText.textContent = isConnected ? 'Connected' : 'Disconnected';
+    if (isConnected) {
+        elements.statusDot.classList.add('active');
+        elements.statusText.textContent = 'Connected';
+    } else {
+        elements.statusDot.classList.remove('active');
+        elements.statusText.textContent = 'Disconnected';
+    }
 }
 
 // Toggle streaming state
 function toggleStreaming() {
     if (state.isStreaming) {
-        stopStreaming(true);
+        stopStreaming();
     } else {
         startStreaming();
     }
@@ -189,213 +183,132 @@ function toggleStreaming() {
 
 // Start streaming audio to the server
 function startStreaming() {
-    if (state.isStreaming) return;
+    if (!state.socket || !state.socket.connected) {
+        addSystemMessage('Not connected to server. Please refresh the page.');
+        return;
+    }
     
     // Request microphone access
     navigator.mediaDevices.getUserMedia({ audio: true, video: false })
         .then(stream => {
-            // Show processing state while setting up
-            elements.streamButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Initializing...';
+            state.isStreaming = true;
+            elements.streamButton.classList.add('recording');
+            elements.streamButton.innerHTML = '<i class="fas fa-stop"></i> Stop Recording';
             
-            // Create audio context
-            state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            
-            // Create microphone source
+            // Initialize Web Audio API
+            state.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
             state.microphone = state.audioContext.createMediaStreamSource(stream);
-            
-            // Create analyser for visualizer
             state.analyser = state.audioContext.createAnalyser();
-            state.analyser.fftSize = 256;
+            state.analyser.fftSize = 2048;
+            
+            // Setup analyzer for visualizer
             visualizerBufferLength = state.analyser.frequencyBinCount;
             visualizerDataArray = new Uint8Array(visualizerBufferLength);
             
-            // Connect microphone to analyser
             state.microphone.connect(state.analyser);
             
-            // Create script processor for audio processing
-            const bufferSize = 4096;
-            state.streamProcessor = state.audioContext.createScriptProcessor(bufferSize, 1, 1);
+            // Create processor node for audio data
+            const processorNode = state.audioContext.createScriptProcessor(4096, 1, 1);
+            processorNode.onaudioprocess = handleAudioProcess;
+            state.analyser.connect(processorNode);
+            processorNode.connect(state.audioContext.destination);
+            state.streamProcessor = processorNode;
             
-            // Set up audio processing callback
-            state.streamProcessor.onaudioprocess = handleAudioProcess;
-            
-            // Connect the processors
-            state.analyser.connect(state.streamProcessor);
-            state.streamProcessor.connect(state.audioContext.destination);
-            
-            // Update UI
-            state.isStreaming = true;
-            elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Listening...';
-            elements.streamButton.classList.add('recording');
-            
-            // Initialize energy window
+            state.silenceTimer = null;
             state.energyWindow = [];
+            state.isSpeaking = false;
+            
+            // Notify server
+            state.socket.emit('start_stream');
             
             // Start volume meter updates
             state.volumeUpdateInterval = setInterval(updateVolumeMeter, 100);
             
-            // Start visualizer if enabled
-            if (elements.showVisualizer.checked && !state.visualizerAnimationFrame) {
-                drawVisualizer();
+            // Make sure visualizer is visible if enabled
+            if (elements.showVisualizer && elements.showVisualizer.checked) {
+                elements.visualizerLabel.style.opacity = '0';
             }
             
-            // Show starting message
-            addSystemMessage('Listening... Speak clearly into your microphone.');
-            
-            // Notify the server that we're starting
-            state.socket.emit('stream_audio', {
-                audio: '',
-                speaker: state.currentSpeaker
-            });
+            addSystemMessage('Recording started. Speak now...');
         })
-        .catch(err => {
-            console.error('Error accessing microphone:', err);
-            addSystemMessage(`Error: ${err.message}. Please make sure your microphone is connected and you've granted permission.`);
-            elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Start Conversation';
+        .catch(error => {
+            console.error('Error accessing microphone:', error);
+            addSystemMessage('Could not access microphone. Please check permissions.');
         });
 }
 
 // Stop streaming audio
 function stopStreaming(notifyServer = true) {
-    if (!state.isStreaming) return;
-    
-    // Update UI first
-    elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Start Conversation';
-    elements.streamButton.classList.remove('recording');
-    elements.streamButton.classList.remove('processing');
-    
-    // Stop volume meter updates
-    if (state.volumeUpdateInterval) {
-        clearInterval(state.volumeUpdateInterval);
-        state.volumeUpdateInterval = null;
+    if (state.isStreaming) {
+        state.isStreaming = false;
+        elements.streamButton.classList.remove('recording');
+        elements.streamButton.classList.remove('processing');
+        elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Start Conversation';
+        
+        // Clean up audio resources
+        if (state.streamProcessor) {
+            state.streamProcessor.disconnect();
+            state.streamProcessor = null;
+        }
+        
+        if (state.analyser) {
+            state.analyser.disconnect();
+            state.analyser = null;
+        }
+        
+        if (state.microphone) {
+            state.microphone.disconnect();
+            state.microphone = null;
+        }
+        
+        if (state.audioContext) {
+            state.audioContext.close().catch(err => console.warn('Error closing audio context:', err));
+            state.audioContext = null;
+        }
+        
+        // Clear any pending silence timer
+        if (state.silenceTimer) {
+            clearTimeout(state.silenceTimer);
+            state.silenceTimer = null;
+        }
+        
+        // Clear volume meter updates
+        if (state.volumeUpdateInterval) {
+            clearInterval(state.volumeUpdateInterval);
+            state.volumeUpdateInterval = null;
+            
+            // Reset volume meter
+            if (elements.volumeLevel) {
+                elements.volumeLevel.style.width = '0%';
+            }
+        }
+        
+        // Show visualizer label
+        if (elements.visualizerLabel) {
+            elements.visualizerLabel.style.opacity = '0.7';
+        }
+        
+        // Notify server if needed
+        if (notifyServer && state.socket && state.socket.connected) {
+            state.socket.emit('stop_stream');
+        }
+        
+        addSystemMessage('Recording stopped.');
     }
-    
-    // Stop all audio processing
-    if (state.streamProcessor) {
-        state.streamProcessor.disconnect();
-        state.streamProcessor = null;
-    }
-    
-    if (state.analyser) {
-        state.analyser.disconnect();
-    }
-    
-    if (state.microphone) {
-        state.microphone.disconnect();
-    }
-    
-    // Close audio context
-    if (state.audioContext && state.audioContext.state !== 'closed') {
-        state.audioContext.close().catch(err => console.warn('Error closing audio context:', err));
-    }
-    
-    // Cleanup animation frames
-    if (state.visualizerAnimationFrame) {
-        cancelAnimationFrame(state.visualizerAnimationFrame);
-        state.visualizerAnimationFrame = null;
-    }
-    
-    // Reset state
-    state.isStreaming = false;
-    state.isSpeaking = false;
-    
-    // Notify the server
-    if (notifyServer && state.socket && state.socket.connected) {
-        state.socket.emit('stop_streaming', {
-            speaker: state.currentSpeaker
-        });
-    }
-    
-    // Show message
-    addSystemMessage('Conversation paused. Click "Start Conversation" to resume.');
 }
 
 // Handle audio processing
 function handleAudioProcess(event) {
+    if (!state.isStreaming) return;
+    
     const inputData = event.inputBuffer.getChannelData(0);
-    
-    // Calculate audio energy (volume level)
     const energy = calculateAudioEnergy(inputData);
-    
-    // Update energy window for averaging
     updateEnergyWindow(energy);
     
-    // Calculate average energy
-    const avgEnergy = calculateAverageEnergy();
+    const averageEnergy = calculateAverageEnergy();
+    const isSilent = averageEnergy < state.silenceThreshold;
     
-    // Determine if audio is silent
-    const isSilent = avgEnergy < state.silenceThreshold;
-    
-    // Debug logging only if significant changes in audio patterns
-    if (Math.random() < 0.05) { // Log only 5% of frames to avoid console spam
-        console.log(`Audio: len=${inputData.length}, energy=${energy.toFixed(4)}, avg=${avgEnergy.toFixed(4)}, silent=${isSilent}`);
-    }
-    
-    // Handle speech state based on silence
     handleSpeechState(isSilent);
-    
-    // Only send audio chunk if we detect speech
-    if (!isSilent) {
-        // Create a resampled version at 24kHz for the server
-        // Most WebRTC audio is 48kHz, but we want 24kHz for the model
-        const resampledData = downsampleBuffer(inputData, state.audioContext.sampleRate, 24000);
-        
-        // Send the audio chunk to the server
-        sendAudioChunk(resampledData, state.currentSpeaker);
-    }
-}
-
-// Cleanup audio resources when done
-function cleanupAudioResources() {
-    // Stop all audio processing
-    if (state.streamProcessor) {
-        state.streamProcessor.disconnect();
-        state.streamProcessor = null;
-    }
-    
-    if (state.analyser) {
-        state.analyser.disconnect();
-        state.analyser = null;
-    }
-    
-    if (state.microphone) {
-        state.microphone.disconnect();
-        state.microphone = null;
-    }
-    
-    // Close audio context
-    if (state.audioContext && state.audioContext.state !== 'closed') {
-        state.audioContext.close().catch(err => console.warn('Error closing audio context:', err));
-    }
-    
-    // Cancel all timers and animation frames
-    if (state.volumeUpdateInterval) {
-        clearInterval(state.volumeUpdateInterval);
-        state.volumeUpdateInterval = null;
-    }
-    
-    if (state.visualizerAnimationFrame) {
-        cancelAnimationFrame(state.visualizerAnimationFrame);
-        state.visualizerAnimationFrame = null;
-    }
-    
-    if (state.silenceTimer) {
-        clearTimeout(state.silenceTimer);
-        state.silenceTimer = null;
-    }
-}
-
-// Clear conversation history
-function clearConversation() {
-    if (elements.conversation) {
-        elements.conversation.innerHTML = '';
-        addSystemMessage('Conversation cleared.');
-        
-        // Notify server to clear context
-        if (state.socket && state.socket.connected) {
-            state.socket.emit('clear_context');
-        }
-    }
 }
 
 // Calculate audio energy (volume)
@@ -419,7 +332,7 @@ function updateEnergyWindow(energy) {
 function calculateAverageEnergy() {
     if (state.energyWindow.length === 0) return 0;
     
-    const sum = state.energyWindow.reduce((a, b) => a + b, 0);
+    const sum = state.energyWindow.reduce((acc, val) => acc + val, 0);
     return sum / state.energyWindow.length;
 }
 
@@ -431,13 +344,12 @@ function updateThreshold() {
 
 // Update the volume meter display
 function updateVolumeMeter() {
-    if (!state.isStreaming || !state.energyWindow.length) return;
+    if (!state.isStreaming || !state.energyWindow.length || !elements.volumeLevel) return;
     
     const avgEnergy = calculateAverageEnergy();
     
     // Scale energy to percentage (0-100)
-    // Typically, energy values will be very small (e.g., 0.001 to 0.1)
-    // So we multiply by a factor to make it more visible
+    // Energy values are typically very small (e.g., 0.001 to 0.1)
     const scaleFactor = 1000;
     const percentage = Math.min(100, Math.max(0, avgEnergy * scaleFactor));
     
@@ -456,197 +368,134 @@ function updateVolumeMeter() {
 
 // Handle speech/silence state transitions
 function handleSpeechState(isSilent) {
-    if (state.isSpeaking && isSilent) {
-        // Transition from speaking to silence
-        if (!state.silenceTimer) {
-            state.silenceTimer = setTimeout(() => {
-                // Only consider it a real silence after a certain duration
-                // This prevents detecting brief pauses as the end of speech
-                state.isSpeaking = false;
+    if (state.isSpeaking) {
+        if (isSilent) {
+            // User was speaking but now is silent
+            if (!state.silenceTimer) {
+                state.silenceTimer = setTimeout(() => {
+                    // Silence lasted long enough, consider speech done
+                    if (state.isSpeaking) {
+                        state.isSpeaking = false;
+                        
+                        // Get the current audio data and send it
+                        const audioBuffer = new Float32Array(state.audioContext.sampleRate * 5); // 5 seconds max
+                        state.analyser.getFloatTimeDomainData(audioBuffer);
+                        
+                        // Create WAV blob
+                        const wavBlob = createWavBlob(audioBuffer, state.audioContext.sampleRate);
+                        
+                        // Convert to base64
+                        const reader = new FileReader();
+                        reader.onloadend = function() {
+                            sendAudioChunk(reader.result, state.currentSpeaker);
+                        };
+                        reader.readAsDataURL(wavBlob);
+                        
+                        // Update button state
+                        elements.streamButton.classList.add('processing');
+                        elements.streamButton.innerHTML = '<i class="fas fa-cog fa-spin"></i> Processing...';
+                        
+                        addSystemMessage('Processing your message...');
+                    }
+                }, CLIENT_SILENCE_DURATION_MS);
+            }
+        } else {
+            // User is still speaking, reset silence timer
+            if (state.silenceTimer) {
+                clearTimeout(state.silenceTimer);
                 state.silenceTimer = null;
-            }, CLIENT_SILENCE_DURATION_MS);
+            }
         }
-    } else if (state.silenceTimer && !isSilent) {
-        // User started speaking again, cancel the silence timer
-        clearTimeout(state.silenceTimer);
-        state.silenceTimer = null;
-    }
-    
-    // Update speaking state for non-silent audio
-    if (!isSilent) {
-        state.isSpeaking = true;
+    } else {
+        if (!isSilent) {
+            // User started speaking
+            state.isSpeaking = true;
+            if (state.silenceTimer) {
+                clearTimeout(state.silenceTimer);
+                state.silenceTimer = null;
+            }
+        }
     }
 }
 
 // Send audio chunk to server
 function sendAudioChunk(audioData, speaker) {
-    if (!state.socket || !state.socket.connected) {
-        console.warn('Socket not connected');
-        return;
-    }
-    
-    console.log(`Preparing audio chunk: length=${audioData.length}, speaker=${speaker}`);
-    
-    // Check for NaN or invalid values
-    let hasInvalidValues = false;
-    for (let i = 0; i < audioData.length; i++) {
-        if (isNaN(audioData[i]) || !isFinite(audioData[i])) {
-            hasInvalidValues = true;
-            console.warn(`Invalid audio value at index ${i}: ${audioData[i]}`);
-            break;
-        }
-    }
-    
-    if (hasInvalidValues) {
-        console.warn('Audio data contains invalid values. Creating silent audio.');
-        audioData = new Float32Array(audioData.length).fill(0);
-    }
-    
-    try {
-        // Create WAV blob
-        const wavData = createWavBlob(audioData, 24000);
-        console.log(`WAV blob created: ${wavData.size} bytes`);
-        
-        const reader = new FileReader();
-        
-        reader.onloadend = function() {
-            try {
-                // Get base64 data
-                const base64data = reader.result;
-                console.log(`Base64 data created: ${base64data.length} bytes`);
-                
-                // Send to server
-                state.socket.emit('stream_audio', {
-                    audio: base64data,
-                    speaker: speaker
-                });
-                console.log('Audio chunk sent to server');
-            } catch (err) {
-                console.error('Error preparing audio data:', err);
-            }
-        };
-        
-        reader.onerror = function() {
-            console.error('Error reading audio data as base64');
-        };
-        
-        reader.readAsDataURL(wavData);
-    } catch (err) {
-        console.error('Error creating WAV data:', err);
+    if (state.socket && state.socket.connected) {
+        state.socket.emit('audio_chunk', {
+            audio: audioData,
+            speaker: speaker
+        });
     }
 }
 
-// Create WAV blob from audio data with improved error handling
+// Create WAV blob from audio data
 function createWavBlob(audioData, sampleRate) {
-    // Validate input
-    if (!audioData || audioData.length === 0) {
-        console.warn('Empty audio data provided to createWavBlob');
-        audioData = new Float32Array(1024).fill(0); // Create 1024 samples of silence
+    const numChannels = 1;
+    const bitsPerSample = 16;
+    const bytesPerSample = bitsPerSample / 8;
+    
+    // Create buffer for WAV file
+    const buffer = new ArrayBuffer(44 + audioData.length * bytesPerSample);
+    const view = new DataView(buffer);
+    
+    // Write WAV header
+    // "RIFF" chunk descriptor
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + audioData.length * bytesPerSample, true);
+    writeString(view, 8, 'WAVE');
+    
+    // "fmt " sub-chunk
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true); // subchunk1size
+    view.setUint16(20, 1, true); // audio format (PCM)
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * numChannels * bytesPerSample, true); // byte rate
+    view.setUint16(32, numChannels * bytesPerSample, true); // block align
+    view.setUint16(34, bitsPerSample, true);
+    
+    // "data" sub-chunk
+    writeString(view, 36, 'data');
+    view.setUint32(40, audioData.length * bytesPerSample, true);
+    
+    // Write audio data
+    const audioDataStart = 44;
+    for (let i = 0; i < audioData.length; i++) {
+        const sample = Math.max(-1, Math.min(1, audioData[i]));
+        const value = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+        view.setInt16(audioDataStart + i * bytesPerSample, value, true);
     }
     
-    // Function to convert Float32Array to Int16Array for WAV format
-    function floatTo16BitPCM(output, offset, input) {
-        for (let i = 0; i < input.length; i++, offset += 2) {
-            // Ensure values are in -1 to 1 range
-            const s = Math.max(-1, Math.min(1, input[i]));
-            // Convert to 16-bit PCM
-            output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-        }
+    return new Blob([buffer], { type: 'audio/wav' });
+}
+
+// Helper function to write strings to DataView
+function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
     }
-    
-    // Create WAV header
-    function writeString(view, offset, string) {
-        for (let i = 0; i < string.length; i++) {
-            view.setUint8(offset + i, string.charCodeAt(i));
-        }
+}
+
+// Clear conversation history
+function clearConversation() {
+    elements.conversation.innerHTML = '';
+    if (state.socket && state.socket.connected) {
+        state.socket.emit('clear_context');
     }
-    
-    try {
-        // Create WAV file with header - careful with buffer sizes
-        const buffer = new ArrayBuffer(44 + audioData.length * 2);
-        const view = new DataView(buffer);
-        
-        // RIFF identifier
-        writeString(view, 0, 'RIFF');
-        
-        // File length (will be filled later)
-        view.setUint32(4, 36 + audioData.length * 2, true);
-        
-        // WAVE identifier
-        writeString(view, 8, 'WAVE');
-        
-        // fmt chunk identifier
-        writeString(view, 12, 'fmt ');
-        
-        // fmt chunk length
-        view.setUint32(16, 16, true);
-        
-        // Sample format (1 is PCM)
-        view.setUint16(20, 1, true);
-        
-        // Mono channel
-        view.setUint16(22, 1, true);
-        
-        // Sample rate
-        view.setUint32(24, sampleRate, true);
-        
-        // Byte rate (sample rate * block align)
-        view.setUint32(28, sampleRate * 2, true);
-        
-        // Block align (channels * bytes per sample)
-        view.setUint16(32, 2, true);
-        
-        // Bits per sample
-        view.setUint16(34, 16, true);
-        
-        // data chunk identifier
-        writeString(view, 36, 'data');
-        
-        // data chunk length
-        view.setUint32(40, audioData.length * 2, true);
-        
-        // Write the PCM samples
-        floatTo16BitPCM(view, 44, audioData);
-        
-        // Create and return blob
-        return new Blob([view], { type: 'audio/wav' });
-    } catch (err) {
-        console.error('Error in createWavBlob:', err);
-        
-        // Create a minimal valid WAV file with silence as fallback
-        const fallbackSamples = new Float32Array(1024).fill(0);
-        const fallbackBuffer = new ArrayBuffer(44 + fallbackSamples.length * 2);
-        const fallbackView = new DataView(fallbackBuffer);
-        
-        writeString(fallbackView, 0, 'RIFF');
-        fallbackView.setUint32(4, 36 + fallbackSamples.length * 2, true);
-        writeString(fallbackView, 8, 'WAVE');
-        writeString(fallbackView, 12, 'fmt ');
-        fallbackView.setUint32(16, 16, true);
-        fallbackView.setUint16(20, 1, true);
-        fallbackView.setUint16(22, 1, true);
-        fallbackView.setUint32(24, sampleRate, true);
-        fallbackView.setUint32(28, sampleRate * 2, true);
-        fallbackView.setUint16(32, 2, true);
-        fallbackView.setUint16(34, 16, true);
-        writeString(fallbackView, 36, 'data');
-        fallbackView.setUint32(40, fallbackSamples.length * 2, true);
-        floatTo16BitPCM(fallbackView, 44, fallbackSamples);
-        
-        return new Blob([fallbackView], { type: 'audio/wav' });
-    }
+    addSystemMessage('Conversation cleared.');
 }
 
 // Draw audio visualizer
 function drawVisualizer() {
-    if (!canvasContext) {
+    if (!canvasContext || !elements.visualizerCanvas) {
+        state.visualizerAnimationFrame = requestAnimationFrame(drawVisualizer);
         return;
     }
     
     state.visualizerAnimationFrame = requestAnimationFrame(drawVisualizer);
     
-    // Skip drawing if visualizer is hidden
-    if (!elements.showVisualizer.checked) {
+    // Skip drawing if visualizer is hidden or not enabled
+    if (elements.showVisualizer && !elements.showVisualizer.checked) {
         if (elements.visualizerCanvas.style.opacity !== '0') {
             elements.visualizerCanvas.style.opacity = '0';
         }
@@ -684,7 +533,6 @@ function drawVisualizer() {
         const value = visualizerDataArray[index];
         
         // Use logarithmic scale for better audio visualization
-        // This makes low values more visible while still maintaining full range
         const logFactor = 20;
         const scaledValue = Math.log(1 + (value / 255) * logFactor) / Math.log(1 + logFactor);
         const barHeight = scaledValue * height;
@@ -696,13 +544,13 @@ function drawVisualizer() {
         // Create color gradient based on frequency and amplitude
         const hue = i / barCount * 360; // Full color spectrum
         const saturation = 80 + (value / 255 * 20); // Higher values more saturated
-        const lightness = 40 + (value / 255 * 20); // Dynamic brightness based on amplitude
+        const lightness = 40 + (value / 255 * 20); // Dynamic brightness
         
         // Draw main bar
         canvasContext.fillStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
         canvasContext.fillRect(x, y, barWidth, barHeight);
         
-        // Add reflection effect
+        // Add highlight effect
         if (barHeight > 5) {
             const gradient = canvasContext.createLinearGradient(
                 x, y, 
@@ -713,255 +561,123 @@ function drawVisualizer() {
             canvasContext.fillStyle = gradient;
             canvasContext.fillRect(x, y, barWidth, barHeight * 0.5);
             
-            // Add highlight on top of the bar for better 3D effect
+            // Add highlight on top of the bar
             canvasContext.fillStyle = `hsla(${hue}, ${saturation - 20}%, ${lightness + 30}%, 0.7)`;
             canvasContext.fillRect(x, y, barWidth, 2);
         }
     }
-    
-    // Show/hide the label
-    elements.visualizerLabel.style.opacity = (state.isStreaming) ? '0' : '0.7';
 }
 
 // Toggle visualizer visibility
 function toggleVisualizerVisibility() {
     const isVisible = elements.showVisualizer.checked;
     elements.visualizerCanvas.style.opacity = isVisible ? '1' : '0';
-    
-    if (isVisible && state.isStreaming && !state.visualizerAnimationFrame) {
-        drawVisualizer();
-    }
-}
-
-// Handle audio response from server
-function handleAudioResponse(data) {
-    console.log('Received audio response');
-    
-    // Create message container
-    const messageElement = document.createElement('div');
-    messageElement.className = 'message ai';
-    
-    // Add text content if available
-    if (data.text) {
-        const textElement = document.createElement('p');
-        textElement.textContent = data.text;
-        messageElement.appendChild(textElement);
-    }
-    
-    // Create and configure audio element
-    const audioElement = document.createElement('audio');
-    audioElement.controls = true;
-    audioElement.className = 'audio-player';
-    
-    // Set audio source
-    const audioSource = document.createElement('source');
-    audioSource.src = data.audio;
-    audioSource.type = 'audio/wav';
-    
-    // Add fallback text
-    audioElement.textContent = 'Your browser does not support the audio element.';
-    
-    // Assemble audio element
-    audioElement.appendChild(audioSource);
-    messageElement.appendChild(audioElement);
-    
-    // Add timestamp
-    const timeElement = document.createElement('span');
-    timeElement.className = 'message-time';
-    timeElement.textContent = new Date().toLocaleTimeString();
-    messageElement.appendChild(timeElement);
-    
-    // Add to conversation
-    elements.conversation.appendChild(messageElement);
-    
-    // Auto-scroll to bottom
-    elements.conversation.scrollTop = elements.conversation.scrollHeight;
-    
-    // Auto-play if enabled
-    if (elements.autoPlayResponses.checked) {
-        audioElement.play()
-            .catch(err => {
-                console.warn('Auto-play failed:', err);
-                addSystemMessage('Auto-play failed. Please click play to hear the response.');
-            });
-    }
-    
-    // Re-enable stream button after processing is complete
-    if (state.isStreaming) {
-        elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Listening...';
-        elements.streamButton.classList.add('recording');
-        elements.streamButton.classList.remove('processing');
-    }
 }
 
 // Handle transcription response from server
 function handleTranscription(data) {
-    console.log('Received transcription:', data.text);
-    
-    // Create message element
-    const messageElement = document.createElement('div');
-    messageElement.className = 'message user';
-    
-    // Add text content
-    const textElement = document.createElement('p');
-    textElement.textContent = data.text;
-    messageElement.appendChild(textElement);
-    
-    // Add timestamp
-    const timeElement = document.createElement('span');
-    timeElement.className = 'message-time';
-    timeElement.textContent = new Date().toLocaleTimeString();
-    messageElement.appendChild(timeElement);
-    
-    // Add to conversation
-    elements.conversation.appendChild(messageElement);
-    
-    // Auto-scroll to bottom
-    elements.conversation.scrollTop = elements.conversation.scrollHeight;
+    const speaker = data.speaker === 0 ? 'user' : 'ai';
+    addMessage(data.text, speaker);
 }
 
 // Handle context update from server
 function handleContextUpdate(data) {
-    console.log('Context updated:', data.message);
+    if (data.status === 'cleared') {
+        elements.conversation.innerHTML = '';
+        addSystemMessage('Conversation context cleared.');
+    }
 }
 
 // Handle streaming status updates from server
 function handleStreamingStatus(data) {
-    console.log('Streaming status:', data.status);
-    
-    if (data.status === 'stopped') {
-        // Reset UI if needed
-        if (state.isStreaming) {
-            stopStreaming(false); // Don't send to server since this came from server
-        }
+    if (data.status === 'active') {
+        console.log('Server acknowledged streaming is active');
+    } else if (data.status === 'inactive') {
+        console.log('Server acknowledged streaming is inactive');
     }
-}
-
-// Add a system message to the conversation
-function addSystemMessage(message) {
-    const messageElement = document.createElement('div');
-    messageElement.className = 'message system';
-    messageElement.textContent = message;
-    elements.conversation.appendChild(messageElement);
-    
-    // Auto-scroll to bottom
-    elements.conversation.scrollTop = elements.conversation.scrollHeight;
-}
-
-// Downsample audio buffer to target sample rate
-function downsampleBuffer(buffer, originalSampleRate, targetSampleRate) {
-    if (originalSampleRate === targetSampleRate) {
-        return buffer;
-    }
-    
-    const ratio = originalSampleRate / targetSampleRate;
-    const newLength = Math.round(buffer.length / ratio);
-    const result = new Float32Array(newLength);
-    
-    for (let i = 0; i < newLength; i++) {
-        const pos = Math.round(i * ratio);
-        result[i] = buffer[pos];
-    }
-    
-    return result;
 }
 
 // Handle processing status updates
 function handleProcessingStatus(data) {
-    console.log('Processing status update:', data);
-    
-    // Show processing status in UI
-    if (data.status === 'generating_audio') {
-        elements.streamButton.innerHTML = '<i class="fas fa-cog fa-spin"></i> Processing...';
-        elements.streamButton.classList.add('processing');
-        elements.streamButton.classList.remove('recording');
-        
-        // Show message to user
-        addSystemMessage(data.message || 'Processing your request...');
+    switch (data.status) {
+        case 'transcribing':
+            addSystemMessage('Transcribing your message...');
+            break;
+        case 'generating':
+            addSystemMessage('Generating response...');
+            break;
+        case 'synthesizing':
+            addSystemMessage('Synthesizing voice...');
+            break;
     }
 }
 
 // Handle the start of an audio streaming response
 function handleAudioResponseStart(data) {
-    console.log('Audio response starting:', data);
+    console.log(`Expecting ${data.total_chunks} audio chunks`);
     
-    // Reset streaming audio state
+    // Reset streaming state
     streamingAudio.chunks = [];
     streamingAudio.totalChunks = data.total_chunks;
     streamingAudio.receivedChunks = 0;
     streamingAudio.text = data.text;
     streamingAudio.complete = false;
-    
-    // Create message container now, so we can update it as chunks arrive
-    const messageElement = document.createElement('div');
-    messageElement.className = 'message ai processing';
-    
-    // Add text content if available
-    if (data.text) {
-        const textElement = document.createElement('p');
-        textElement.textContent = data.text;
-        messageElement.appendChild(textElement);
-    }
-    
-    // Create audio element (will be populated as chunks arrive)
-    const audioElement = document.createElement('audio');
-    audioElement.controls = true;
-    audioElement.className = 'audio-player';
-    audioElement.textContent = 'Audio is being generated...';
-    messageElement.appendChild(audioElement);
-    
-    // Add timestamp
-    const timeElement = document.createElement('span');
-    timeElement.className = 'message-time';
-    timeElement.textContent = new Date().toLocaleTimeString();
-    messageElement.appendChild(timeElement);
-    
-    // Add loading indicator
-    const loadingElement = document.createElement('div');
-    loadingElement.className = 'loading-indicator';
-    loadingElement.innerHTML = '<div class="loading-spinner"></div><span>Generating audio response...</span>';
-    messageElement.appendChild(loadingElement);
-    
-    // Add to conversation
-    elements.conversation.appendChild(messageElement);
-    
-    // Auto-scroll to bottom
-    elements.conversation.scrollTop = elements.conversation.scrollHeight;
-    
-    // Store elements for later updates
-    streamingAudio.messageElement = messageElement;
-    streamingAudio.audioElement = audioElement;
 }
 
 // Handle an incoming audio chunk
 function handleAudioResponseChunk(data) {
-    console.log(`Received audio chunk ${data.chunk_index + 1}/${data.total_chunks}`);
+    // Create or update audio element for playback
+    const audioElement = document.createElement('audio');
+    if (elements.autoPlayResponses.checked) {
+        audioElement.autoplay = true;
+    }
+    audioElement.controls = true;
+    audioElement.className = 'audio-player';
+    audioElement.src = data.chunk;
     
     // Store the chunk
-    streamingAudio.chunks[data.chunk_index] = data.audio;
+    streamingAudio.chunks[data.chunk_index] = data.chunk;
     streamingAudio.receivedChunks++;
     
-    // Update progress in the UI
-    if (streamingAudio.messageElement) {
-        const loadingElement = streamingAudio.messageElement.querySelector('.loading-indicator span');
-        if (loadingElement) {
-            loadingElement.textContent = `Generating audio response... ${Math.round((streamingAudio.receivedChunks / data.total_chunks) * 100)}%`;
+    // Add to the conversation
+    const messages = elements.conversation.querySelectorAll('.message.ai');
+    if (messages.length > 0) {
+        const lastAiMessage = messages[messages.length - 1];
+        
+        // Replace existing audio player if there is one
+        const existingPlayer = lastAiMessage.querySelector('.audio-player');
+        if (existingPlayer) {
+            lastAiMessage.replaceChild(audioElement, existingPlayer);
+        } else {
+            lastAiMessage.appendChild(audioElement);
         }
+    } else {
+        // Create a new message for the AI response
+        const aiMessage = document.createElement('div');
+        aiMessage.className = 'message ai';
+        
+        if (streamingAudio.text) {
+            const textElement = document.createElement('p');
+            textElement.textContent = streamingAudio.text;
+            aiMessage.appendChild(textElement);
+        }
+        
+        aiMessage.appendChild(audioElement);
+        elements.conversation.appendChild(aiMessage);
     }
     
-    // If this is the first chunk, start playing it immediately for faster response
-    if (data.chunk_index === 0 && streamingAudio.audioElement && elements.autoPlayResponses && elements.autoPlayResponses.checked) {
-        try {
-            streamingAudio.audioElement.src = data.audio;
-            streamingAudio.audioElement.play().catch(err => console.warn('Auto-play failed:', err));
-        } catch (e) {
-            console.error('Error playing first chunk:', e);
-        }
-    }
+    // Auto-scroll
+    elements.conversation.scrollTop = elements.conversation.scrollHeight;
     
-    // If this is the last chunk or we've received all chunks, finalize the audio
-    if (data.is_last || streamingAudio.receivedChunks >= data.total_chunks) {
-        finalizeStreamingAudio();
+    // If this is the last chunk or we've received all expected chunks
+    if (data.is_last || streamingAudio.receivedChunks >= streamingAudio.totalChunks) {
+        streamingAudio.complete = true;
+        
+        // Reset stream button if we're still streaming
+        if (state.isStreaming) {
+            elements.streamButton.classList.remove('processing');
+            elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Listening...';
+        }
     }
 }
 

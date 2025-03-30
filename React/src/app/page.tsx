@@ -1,10 +1,8 @@
-"use client";
 import { useState } from "react";
 import { auth0 } from "../lib/auth0";
 
 
 export default async function Home() {
-
 	
 	const [contacts, setContacts] = useState<string[]>([]);
 	const [codeword, setCodeword] = useState("");
@@ -12,6 +10,38 @@ export default async function Home() {
 	const session = await auth0.getSession();
 
 	console.log("Session:", session?.user);
+
+	function saveToDB() {
+		//e.preventDefault();
+		alert("Saving contacts...");
+		// const contactInputs = document.querySelectorAll(".text-input") as NodeListOf<HTMLInputElement>;
+		// const contactValues = Array.from(contactInputs).map(input => input.value);
+		// console.log("Contact values:", contactValues);
+		// // save codeword and contacts to database
+		// fetch("/api/databaseStorage", {
+		// 	method: "POST",
+		// 	headers: {
+		// 		"Content-Type": "application/json",
+		// 	},
+		// 	body: JSON.stringify({
+		// 		email: session?.user?.email || "",
+		// 		codeword: (document.getElementById("codeword") as HTMLInputElement)?.value,
+		// 		contacts: contactValues,
+		// 	}),
+		// })
+		// 	.then((response) => {
+		// 		if (response.ok) {
+		// 			alert("Contacts saved successfully!");
+		// 		} else {
+		// 			alert("Error saving contacts.");
+		// 		}
+		// 	})
+		// 	.catch((error) => {
+		// 		console.error("Error:", error);
+		// 		alert("Error saving contacts.");
+		// 	});
+	
+	}
 
 
 	// If no session, show sign-up and login buttons
@@ -134,38 +164,9 @@ export default async function Home() {
 					className="bg-emerald-500 text-fuchsia-300"
 					type="button">Add</button>
 					
-						<button 
+					<button 
 						type="button"
-						onClick={(e) => {
-							e.preventDefault();
-							alert("Saving contacts...");
-							const contactInputs = document.querySelectorAll(".text-input") as NodeListOf<HTMLInputElement>;
-							const contactValues = Array.from(contactInputs).map(input => input.value);
-							console.log("Contact values:", contactValues);
-							// save codeword and contacts to database
-							fetch("/api/databaseStorage", {
-								method: "POST",
-								headers: {
-									"Content-Type": "application/json",
-								},
-								body: JSON.stringify({
-									email: session.user.email,
-									codeword: codeword,
-									contacts: contactValues,
-								}),
-							})
-							.then((response) => {
-								if (response.ok) {
-									alert("Contacts saved successfully!");
-								} else {
-									alert("Error saving contacts.");
-								}
-							})
-							.catch((error) => {
-								console.error("Error:", error);
-								alert("Error saving contacts.");
-							})
-						}}
+						onClick={saveToDB}
 						className="bg-slate-500 text-yellow-300 text-stretch-50% font-lg rounded-md p-2">Save</button>
 					</form>
 					<div>
@@ -181,4 +182,6 @@ export default async function Home() {
 			</main>
 		</div>
 	);
+
+	
 }

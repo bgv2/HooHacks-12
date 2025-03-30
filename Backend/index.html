@@ -720,16 +720,33 @@
         }
         
         function convertToFloat32(arrayBuffer) {
-            // Get raw audio data as Int16 (common format for audio)
-            const int16Array = new Int16Array(arrayBuffer);
-            
-            // Convert to Float32 (normalize between -1 and 1)
-            const float32Array = new Float32Array(int16Array.length);
-            for (let i = 0; i < int16Array.length; i++) {
-                float32Array[i] = int16Array[i] / 32768.0;
+            try {
+                // Ensure the buffer length is even (multiple of 2 bytes for Int16)
+                const bytesArray = new Uint8Array(arrayBuffer);
+                const evenLength = Math.floor(bytesArray.length / 2) * 2;
+                
+                // If we had to adjust the length, create a new buffer with even length
+                let bufferToProcess = arrayBuffer;
+                if (bytesArray.length !== evenLength) {
+                    console.warn(`Adjusting audio buffer from ${bytesArray.length} to ${evenLength} bytes`);
+                    bufferToProcess = bytesArray.slice(0, evenLength).buffer;
+                }
+                
+                // Get raw audio data as Int16 (common format for audio)
+                const int16Array = new Int16Array(bufferToProcess);
+                
+                // Convert to Float32 (normalize between -1 and 1)
+                const float32Array = new Float32Array(int16Array.length);
+                for (let i = 0; i < int16Array.length; i++) {
+                    float32Array[i] = int16Array[i] / 32768.0;
+                }
+                
+                return float32Array;
+            } catch (e) {
+                console.error('Error converting audio data:', e);
+                // Return an empty audio buffer to avoid breaking the app
+                return new Float32Array(0);
             }
-            
-            return float32Array;
         }
         
         function addMessage(sender, text, textOnly = false) {

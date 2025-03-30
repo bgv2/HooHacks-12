@@ -112,9 +112,8 @@ function CallPage() {
             <button onClick={playAudio}>Play Audio</button>
           </>
         )}
-
-        <button onClick={handleEmergency} className="bg-red-500 text-white rounded-md p-2">Emergency</button>
-        <button className="bg-blue-500 text-white rounded-md p-2"
+        <button onClick={handleEmergency} className="bg-red-500 text-white rounded-md p-8 text-2xl font-bold">Emergency</button>
+        <button className="bg-blue-500 text-white rounded-md p-8 text-2xl font-bold"
           onClick={() => {
             window.location.href = '/';
           }}>

@@ -13,6 +13,11 @@ import requests
 import huggingface_hub
 from generator import load_csm_1b, Segment
 
+# Force CPU mode regardless of what's available
+# This bypasses the CUDA/cuDNN library requirements
+os.environ["CUDA_VISIBLE_DEVICES"] = ""  # Hide all CUDA devices
+torch.backends.cudnn.enabled = False  # Disable cuDNN
+
 # Configure environment with longer timeouts
 os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "600"  # 10 minutes timeout for downloads
 requests.adapters.DEFAULT_TIMEOUT = 60  # Increase default requests timeout
@@ -24,30 +29,10 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your-secret-key'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Check for CUDA availability and handle potential CUDA/cuDNN issues
-try:
-    cuda_available = torch.cuda.is_available()
-    # Try to initialize CUDA to check if libraries are properly loaded
-    if cuda_available:
-        _ = torch.zeros(1).cuda()
-        device = "cuda"
-        whisper_compute_type = "float16"
-        print("CUDA is available and initialized successfully")
-    elif torch.backends.mps.is_available():
-        device = "mps"
-        whisper_compute_type = "float32"
-        print("MPS is available (Apple Silicon)")
-    else:
-        device = "cpu"
-        whisper_compute_type = "int8"
-        print("Using CPU (CUDA/MPS not available)")
-except Exception as e:
-    print(f"Error initializing CUDA: {e}")
-    print("Falling back to CPU")
-    device = "cpu"
-    whisper_compute_type = "int8"
-    
-print(f"Using device: {device}")
+# Force CPU regardless of what hardware is available
+device = "cuda" if torch.cuda.is_available() else "cpu"
+whisper_compute_type = "int8"
+print(f"Forcing CPU mode for all models")
 
 # Initialize models with proper error handling
 whisper_model = None
@@ -60,12 +45,10 @@ def load_models():
     
     # Initialize Faster-Whisper for transcription
     try:
-        print("Loading Whisper model...")
+        print("Loading Whisper model on CPU...")
         # Import here to avoid immediate import errors if package is missing
         from faster_whisper import WhisperModel
-        # Force CPU for Whisper if we had CUDA issues
-        whisper_device = device if device != "cpu" else "cpu"
-        whisper_model = WhisperModel("base", device=whisper_device, compute_type=whisper_compute_type, download_root="./models/whisper")
+        whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8", download_root="./models/whisper")
         print("Whisper model loaded successfully")
     except Exception as e:
         print(f"Error loading Whisper model: {e}")
@@ -73,10 +56,8 @@ def load_models():
     
     # Initialize CSM model for audio generation
     try:
-        print("Loading CSM model...")
-        # Force CPU for CSM if we had CUDA issues
-        csm_device = device if device != "cpu" else "cpu"
-        csm_generator = load_csm_1b(device=csm_device)
+        print("Loading CSM model on CPU...")
+        csm_generator = load_csm_1b(device="cpu")
         print("CSM model loaded successfully")
     except Exception as e:
         print(f"Error loading CSM model: {e}")
@@ -84,15 +65,13 @@ def load_models():
     
     # Initialize Llama 3.2 model for response generation
     try:
-        print("Loading Llama 3.2 model...")
+        print("Loading Llama 3.2 model on CPU...")
         llm_model_id = "meta-llama/Llama-3.2-1B"  # Choose appropriate size based on resources
         llm_tokenizer = AutoTokenizer.from_pretrained(llm_model_id, cache_dir="./models/llama")
-        # Force CPU for LLM if we had CUDA issues
-        llm_device = device if device != "cpu" else "cpu"
         llm_model = AutoModelForCausalLM.from_pretrained(
             llm_model_id,
-            torch_dtype=torch.bfloat16 if llm_device != "cpu" else torch.float32,
-            device_map=llm_device,
+            torch_dtype=torch.float32,  # Use float32 on CPU
+            device_map="cpu",
             cache_dir="./models/llama",
             low_cpu_mem_usage=True
         )
@@ -379,7 +358,7 @@ if __name__ == '__main__':
         os.rename('index.html', 'templates/index.html')
     
     # Load models asynchronously before starting the server
-    print("Starting model loading...")
+    print("Starting CPU-only model loading...")
     # In a production environment, you could load models in a separate thread
     load_models()
     

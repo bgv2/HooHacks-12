@@ -19,8 +19,6 @@ import uvicorn
 import time
 import gc
 from collections import deque
-import socket
-import requests
 
 # Select device
 if torch.cuda.is_available():
@@ -484,53 +482,26 @@ async def websocket_endpoint(websocket: WebSocket):
             pass
         manager.disconnect(websocket)
 
-# Add this function to get the public IP address
-def get_public_ip():
-    """Get the server's public IP address using an external service"""
-    try:
-        # Try multiple services in case one is down
-        services = [
-            "https://api.ipify.org",
-            "https://ifconfig.me/ip",
-            "https://checkip.amazonaws.com",
-        ]
-        
-        for service in services:
-            try:
-                response = requests.get(service, timeout=3)
-                if response.status_code == 200:
-                    return response.text.strip()
-            except:
-                continue
-                
-        # Fallback to socket if external services fail
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            # Doesn't need to be reachable, just used to determine interface
-            s.connect(('8.8.8.8', 1))
-            local_ip = s.getsockname()[0]
-            return local_ip
-        except:
-            return "localhost"
-        finally:
-            s.close()
-    except:
-        return "Could not determine IP address"
-
-# Update the __main__ block
+# Update the __main__ block with a comprehensive server startup message
 if __name__ == "__main__":
-    public_ip = get_public_ip()
-    print(f"\n{'='*50}")
-    print(f"💬 Sesame AI Voice Chat Server")
-    print(f"{'='*50}")
+    print(f"\n{'='*60}")
+    print(f"🔊 Sesame AI Voice Chat Server")
+    print(f"{'='*60}")
     print(f"📡 Server Information:")
-    print(f"   - Public IP: http://{public_ip}:8000")
     print(f"   - Local URL: http://localhost:8000")
-    print(f"   - WebSocket: ws://{public_ip}:8000/ws")
-    print(f"{'='*50}")
-    print(f"🌐 Connect from web browsers using: http://{public_ip}:8000")
-    print(f"🔧 Serving index.html from: {os.path.join(base_dir, 'index.html')}")
-    print(f"{'='*50}\n")
+    print(f"   - Network URL: http://<your-ip-address>:8000")
+    print(f"   - WebSocket: ws://<your-ip-address>:8000/ws")
+    print(f"{'='*60}")
+    print(f"💡 To make this server public:")
+    print(f"   1. Ensure port 8000 is open in your firewall")
+    print(f"   2. Set up port forwarding on your router to port 8000")
+    print(f"   3. Or use a service like ngrok with: ngrok http 8000")
+    print(f"{'='*60}")
+    print(f"🌐 Device: {device.upper()}")
+    print(f"🧠 Models loaded: Sesame CSM + WhisperX ({asr_model.device})")
+    print(f"🔧 Serving from: {os.path.join(base_dir, 'index.html')}")
+    print(f"{'='*60}")
+    print(f"Ready to receive connections! Press Ctrl+C to stop the server.\n")
     
     # Start the server
     uvicorn.run(app, host="0.0.0.0", port=8000)

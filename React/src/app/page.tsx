@@ -14,16 +14,16 @@ export default async function Home() {
 	if (!session) {	
 
 		return (
-			<div className="items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-				<main className="flex flex-row gap-[32px] row-start-2 items-center sm:items-start">
+			<div className="space-y-7 bg-indigo-800 items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
+				<main className="space-x-2 flex flex-row gap-[32px] row-start-2 items-center sm:items-start">
 					<a href="/auth/login?screen_hint=signup">
-						<button className="w-16 bg-indigo-800 text-green-300">Sign up</button>
+						<button className="w-16 bg-indigo-900 text-green-300">Sign up</button>
 					</a>
 					<a href="/auth/login">
 						<button className = "w-16 bg-indigo-500 text-green-400">Log in</button>
 					</a>
 				</main>
-				<h1>fauxcall</h1>
+				<h1 className="text-3xl font-serif">fauxcall</h1>
 				<h2>set emergency contacts</h2>
 				<p>if you stop speaking or say the codeword, these contacts will be notified</p>
 				{/* form for setting codeword */}

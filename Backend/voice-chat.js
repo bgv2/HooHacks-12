@@ -43,7 +43,9 @@ const state = {
     volumeUpdateInterval: null,
     visualizerAnimationFrame: null,
     currentSpeaker: 0,
-    aiSpeakerId: 1  // Define the AI's speaker ID to match server.py
+    aiSpeakerId: 1,  // Define the AI's speaker ID to match server.py
+    transcriptionRetries: 0,
+    maxTranscriptionRetries: 3
 };
 
 // Visualizer variables
@@ -429,7 +431,15 @@ function handleSpeechState(isSilent) {
                             
                             if (!hasAudioContent) {
                                 console.warn('Audio buffer appears to be empty or very quiet');
-                                addSystemMessage('No speech detected. Please try again and speak clearly.');
+                                
+                                if (state.transcriptionRetries < state.maxTranscriptionRetries) {
+                                    state.transcriptionRetries++;
+                                    const retryMessage = `No speech detected (attempt ${state.transcriptionRetries}/${state.maxTranscriptionRetries}). Please speak louder and try again.`;
+                                    addSystemMessage(retryMessage);
+                                } else {
+                                    state.transcriptionRetries = 0;
+                                    addSystemMessage('Multiple attempts failed to detect speech. Please check your microphone and try again.');
+                                }
                                 return;
                             }
                             

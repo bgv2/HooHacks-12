@@ -23,7 +23,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const { email, codeword, contacts } = req.body;
 
       // Perform database operations here
-      
+      // query database to see if document with email exists
+      const existingUser = await mongoose.model('User').findOne({ email });
+      if (existingUser) {
+        // If user exists, update their codeword and contacts
+        await mongoose.model('User').updateOne({ email }, { codeword, contacts });
+      } else {
+        // If user does not exist, create a new user
+        const User = mongoose.model('User');
+        const newUser = new User({ email, codeword, contacts });
+        await newUser.save();
+      }
+
 
       console.log("Codeword:", codeword);
       console.log("Contacts:", contacts);

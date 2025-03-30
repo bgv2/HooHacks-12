@@ -466,37 +466,27 @@ function sendAudioChunk(audioData, speaker) {
         return;
     }
     
-    console.log(`Creating WAV from audio data: length=${audioData.length}`);
+    console.log(`Preparing audio chunk: length=${audioData.length}, speaker=${speaker}`);
     
     // Check for NaN or invalid values
-    let hasNaN = false;
-    let min = Infinity;
-    let max = -Infinity;
-    let sum = 0;
-    
+    let hasInvalidValues = false;
     for (let i = 0; i < audioData.length; i++) {
         if (isNaN(audioData[i]) || !isFinite(audioData[i])) {
-            hasNaN = true;
+            hasInvalidValues = true;
             console.warn(`Invalid audio value at index ${i}: ${audioData[i]}`);
             break;
         }
-        min = Math.min(min, audioData[i]);
-        max = Math.max(max, audioData[i]);
-        sum += audioData[i];
     }
     
-    if (hasNaN) {
-        console.warn('Audio data contains NaN or Infinity values. Creating silent audio instead.');
+    if (hasInvalidValues) {
+        console.warn('Audio data contains invalid values. Creating silent audio.');
         audioData = new Float32Array(audioData.length).fill(0);
-    } else {
-        const avg = sum / audioData.length;
-        console.log(`Audio stats: min=${min.toFixed(4)}, max=${max.toFixed(4)}, avg=${avg.toFixed(4)}`);
     }
     
     try {
-        // Create WAV blob with proper format
+        // Create WAV blob
         const wavData = createWavBlob(audioData, 24000);
-        console.log(`WAV blob created: size=${wavData.size} bytes, type=${wavData.type}`);
+        console.log(`WAV blob created: ${wavData.size} bytes`);
         
         const reader = new FileReader();
         
@@ -504,28 +494,21 @@ function sendAudioChunk(audioData, speaker) {
             try {
                 // Get base64 data
                 const base64data = reader.result;
-                console.log(`Base64 data created: length=${base64data.length}`);
+                console.log(`Base64 data created: ${base64data.length} bytes`);
                 
-                // Validate the base64 data before sending
-                if (!base64data || base64data.length < 100) {
-                    console.warn('Generated base64 data is too small or invalid');
-                    return;
-                }
-                
-                // Send the audio chunk to the server
-                console.log('Sending audio data to server...');
+                // Send to server
                 state.socket.emit('stream_audio', {
                     audio: base64data,
                     speaker: speaker
                 });
-                console.log('Audio data sent successfully');
+                console.log('Audio chunk sent to server');
             } catch (err) {
                 console.error('Error preparing audio data:', err);
             }
         };
         
-        reader.onerror = function(err) {
-            console.error('Error reading audio data:', err);
+        reader.onerror = function() {
+            console.error('Error reading audio data as base64');
         };
         
         reader.readAsDataURL(wavData);
@@ -534,19 +517,20 @@ function sendAudioChunk(audioData, speaker) {
     }
 }
 
-// Create WAV blob from audio data with validation
+// Create WAV blob from audio data with improved error handling
 function createWavBlob(audioData, sampleRate) {
-    // Check if audio data is valid
+    // Validate input
     if (!audioData || audioData.length === 0) {
-        console.warn('Empty audio data received');
-        // Return a tiny silent audio snippet instead
-        audioData = new Float32Array(100).fill(0);
+        console.warn('Empty audio data provided to createWavBlob');
+        audioData = new Float32Array(1024).fill(0); // Create 1024 samples of silence
     }
     
     // Function to convert Float32Array to Int16Array for WAV format
     function floatTo16BitPCM(output, offset, input) {
         for (let i = 0; i < input.length; i++, offset += 2) {
+            // Ensure values are in -1 to 1 range
             const s = Math.max(-1, Math.min(1, input[i]));
+            // Convert to 16-bit PCM
             output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
         }
     }
@@ -558,40 +542,80 @@ function createWavBlob(audioData, sampleRate) {
         }
     }
     
-    // Create WAV file with header
-    function encodeWAV(samples) {
-        const buffer = new ArrayBuffer(44 + samples.length * 2);
+    try {
+        // Create WAV file with header - careful with buffer sizes
+        const buffer = new ArrayBuffer(44 + audioData.length * 2);
         const view = new DataView(buffer);
         
-        // RIFF chunk descriptor
+        // RIFF identifier
         writeString(view, 0, 'RIFF');
-        view.setUint32(4, 36 + samples.length * 2, true);
+        
+        // File length (will be filled later)
+        view.setUint32(4, 36 + audioData.length * 2, true);
+        
+        // WAVE identifier
         writeString(view, 8, 'WAVE');
         
-        // fmt sub-chunk
+        // fmt chunk identifier
         writeString(view, 12, 'fmt ');
+        
+        // fmt chunk length
         view.setUint32(16, 16, true);
-        view.setUint16(20, 1, true); // PCM format
-        view.setUint16(22, 1, true); // Mono channel
+        
+        // Sample format (1 is PCM)
+        view.setUint16(20, 1, true);
+        
+        // Mono channel
+        view.setUint16(22, 1, true);
+        
+        // Sample rate
         view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * 2, true); // Byte rate
-        view.setUint16(32, 2, true); // Block align
-        view.setUint16(34, 16, true); // Bits per sample
         
-        // data sub-chunk
+        // Byte rate (sample rate * block align)
+        view.setUint32(28, sampleRate * 2, true);
+        
+        // Block align (channels * bytes per sample)
+        view.setUint16(32, 2, true);
+        
+        // Bits per sample
+        view.setUint16(34, 16, true);
+        
+        // data chunk identifier
         writeString(view, 36, 'data');
-        view.setUint32(40, samples.length * 2, true);
-        floatTo16BitPCM(view, 44, samples);
         
-        return buffer;
+        // data chunk length
+        view.setUint32(40, audioData.length * 2, true);
+        
+        // Write the PCM samples
+        floatTo16BitPCM(view, 44, audioData);
+        
+        // Create and return blob
+        return new Blob([view], { type: 'audio/wav' });
+    } catch (err) {
+        console.error('Error in createWavBlob:', err);
+        
+        // Create a minimal valid WAV file with silence as fallback
+        const fallbackSamples = new Float32Array(1024).fill(0);
+        const fallbackBuffer = new ArrayBuffer(44 + fallbackSamples.length * 2);
+        const fallbackView = new DataView(fallbackBuffer);
+        
+        writeString(fallbackView, 0, 'RIFF');
+        fallbackView.setUint32(4, 36 + fallbackSamples.length * 2, true);
+        writeString(fallbackView, 8, 'WAVE');
+        writeString(fallbackView, 12, 'fmt ');
+        fallbackView.setUint32(16, 16, true);
+        fallbackView.setUint16(20, 1, true);
+        fallbackView.setUint16(22, 1, true);
+        fallbackView.setUint32(24, sampleRate, true);
+        fallbackView.setUint32(28, sampleRate * 2, true);
+        fallbackView.setUint16(32, 2, true);
+        fallbackView.setUint16(34, 16, true);
+        writeString(fallbackView, 36, 'data');
+        fallbackView.setUint32(40, fallbackSamples.length * 2, true);
+        floatTo16BitPCM(fallbackView, 44, fallbackSamples);
+        
+        return new Blob([fallbackView], { type: 'audio/wav' });
     }
-    
-    // Convert audio data to TypedArray if it's a regular Array
-    const samples = Array.isArray(audioData) ? new Float32Array(audioData) : audioData;
-    
-    // Create WAV blob
-    const wavBuffer = encodeWAV(samples);
-    return new Blob([wavBuffer], { type: 'audio/wav' });
 }
 
 // Draw audio visualizer

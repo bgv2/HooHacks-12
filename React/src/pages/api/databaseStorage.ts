@@ -55,6 +55,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       await mongoose.model('User').find({});
       await mongoose.model('User').find({});
       await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({}); 
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
       res.status(200).json({ success: true, message: "Data saved successfully!" });
     } else {
       res.setHeader('Allow', ['POST']);

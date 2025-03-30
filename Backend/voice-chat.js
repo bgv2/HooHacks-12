@@ -70,88 +70,18 @@ function initializeApp() {
 
 // Initialize UI elements
 function initializeUIElements() {
-    // Main UI containers
-    const chatContainer = document.querySelector('.chat-container');
-    const controlPanel = document.querySelector('.control-panel');
-
-    // Create conversation section
-    chatContainer.innerHTML = `
-        <div class="chat-header">
-            <h2>Conversation</h2>
-            <div class="status-indicator">
-                <div class="status-dot"></div>
-                <span class="status-text">Disconnected</span>
-            </div>
-        </div>
-        <div class="conversation"></div>
-    `;
-
-    // Create control panel
-    controlPanel.innerHTML = `
-        <div class="visualizer-section">
-            <div class="visualizer-container">
-                <canvas id="audioVisualizer"></canvas>
-                <div class="visualizer-label">Speak to see audio visualization</div>
-            </div>
-        </div>
-        
-        <div class="controls">
-            <div class="control-group">
-                <div class="control-label">Voice Controls</div>
-                
-                <div class="volume-indicator">
-                    <div class="volume-level" style="width:0%"></div>
-                </div>
-                
-                <div class="slider-container">
-                    <div class="slider-label">
-                        <span>Silence Threshold</span>
-                        <span id="thresholdValue">0.01</span>
-                    </div>
-                    <input type="range" id="thresholdSlider" min="0.001" max="0.05" step="0.001" value="0.01">
-                </div>
-                
-                <select id="speakerSelection">
-                    <option value="0">Speaker 1 (You)</option>
-                    <option value="1">Speaker 2 (Alternative)</option>
-                </select>
-                
-                <div class="button-row">
-                    <button id="streamButton"><i class="fas fa-microphone"></i> Start Conversation</button>
-                    <button id="clearButton"><i class="fas fa-trash"></i> Clear</button>
-                </div>
-            </div>
-            
-            <div class="control-group settings-panel">
-                <div class="control-label">Settings</div>
-                
-                <div class="settings-toggles">
-                    <div class="toggle-switch">
-                        <input type="checkbox" id="autoPlayResponses" checked>
-                        <label for="autoPlayResponses">Auto-play AI responses</label>
-                    </div>
-                    
-                    <div class="toggle-switch">
-                        <input type="checkbox" id="showVisualizer" checked>
-                        <label for="showVisualizer">Show audio visualizer</label>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-
     // Store references to UI elements
-    elements.conversation = document.querySelector('.conversation');
+    elements.conversation = document.getElementById('conversation');
     elements.streamButton = document.getElementById('streamButton');
     elements.clearButton = document.getElementById('clearButton');
     elements.thresholdSlider = document.getElementById('thresholdSlider');
     elements.thresholdValue = document.getElementById('thresholdValue');
     elements.visualizerCanvas = document.getElementById('audioVisualizer');
-    elements.visualizerLabel = document.querySelector('.visualizer-label');
-    elements.volumeLevel = document.querySelector('.volume-level');
-    elements.statusDot = document.querySelector('.status-dot');
-    elements.statusText = document.querySelector('.status-text');
-    elements.speakerSelection = document.getElementById('speakerSelection');
+    elements.visualizerLabel = document.getElementById('visualizerLabel');
+    elements.volumeLevel = document.getElementById('volumeLevel');
+    elements.statusDot = document.getElementById('statusDot');
+    elements.statusText = document.getElementById('statusText');
+    elements.speakerSelection = document.getElementById('speakerSelect'); // Changed to match HTML
     elements.autoPlayResponses = document.getElementById('autoPlayResponses');
     elements.showVisualizer = document.getElementById('showVisualizer');
 }
@@ -364,8 +294,12 @@ function stopStreaming(notifyServer = true) {
 function handleAudioProcess(event) {
     const inputData = event.inputBuffer.getChannelData(0);
     
+    // Log audio buffer statistics
+    console.log(`Audio buffer: length=${inputData.length}, sample rate=${state.audioContext.sampleRate}Hz`);
+    
     // Calculate audio energy (volume level)
     const energy = calculateAudioEnergy(inputData);
+    console.log(`Energy: ${energy.toFixed(6)}, threshold: ${state.silenceThreshold}`);
     
     // Update energy window for averaging
     updateEnergyWindow(energy);
@@ -375,6 +309,7 @@ function handleAudioProcess(event) {
     
     // Determine if audio is silent
     const isSilent = avgEnergy < state.silenceThreshold;
+    console.log(`Silent: ${isSilent ? 'Yes' : 'No'}, avg energy: ${avgEnergy.toFixed(6)}`);
     
     // Handle speech state based on silence
     handleSpeechState(isSilent);
@@ -384,6 +319,7 @@ function handleAudioProcess(event) {
         // Create a resampled version at 24kHz for the server
         // Most WebRTC audio is 48kHz, but we want 24kHz for the model
         const resampledData = downsampleBuffer(inputData, state.audioContext.sampleRate, 24000);
+        console.log(`Resampled audio: ${state.audioContext.sampleRate}Hz → 24000Hz, new length: ${resampledData.length}`);
         
         // Send the audio chunk to the server
         sendAudioChunk(resampledData, state.currentSpeaker);
@@ -530,20 +466,132 @@ function sendAudioChunk(audioData, speaker) {
         return;
     }
     
-    const wavData = createWavBlob(audioData, 24000);
-    const reader = new FileReader();
+    console.log(`Creating WAV from audio data: length=${audioData.length}`);
     
-    reader.onloadend = function() {
-        const base64data = reader.result;
+    // Check for NaN or invalid values
+    let hasNaN = false;
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+    
+    for (let i = 0; i < audioData.length; i++) {
+        if (isNaN(audioData[i]) || !isFinite(audioData[i])) {
+            hasNaN = true;
+            console.warn(`Invalid audio value at index ${i}: ${audioData[i]}`);
+            break;
+        }
+        min = Math.min(min, audioData[i]);
+        max = Math.max(max, audioData[i]);
+        sum += audioData[i];
+    }
+    
+    if (hasNaN) {
+        console.warn('Audio data contains NaN or Infinity values. Creating silent audio instead.');
+        audioData = new Float32Array(audioData.length).fill(0);
+    } else {
+        const avg = sum / audioData.length;
+        console.log(`Audio stats: min=${min.toFixed(4)}, max=${max.toFixed(4)}, avg=${avg.toFixed(4)}`);
+    }
+    
+    try {
+        // Create WAV blob with proper format
+        const wavData = createWavBlob(audioData, 24000);
+        console.log(`WAV blob created: size=${wavData.size} bytes, type=${wavData.type}`);
         
-        // Send the audio chunk to the server
-        state.socket.emit('stream_audio', {
-            audio: base64data,
-            speaker: speaker
-        });
-    };
+        const reader = new FileReader();
+        
+        reader.onloadend = function() {
+            try {
+                // Get base64 data
+                const base64data = reader.result;
+                console.log(`Base64 data created: length=${base64data.length}`);
+                
+                // Validate the base64 data before sending
+                if (!base64data || base64data.length < 100) {
+                    console.warn('Generated base64 data is too small or invalid');
+                    return;
+                }
+                
+                // Send the audio chunk to the server
+                console.log('Sending audio data to server...');
+                state.socket.emit('stream_audio', {
+                    audio: base64data,
+                    speaker: speaker
+                });
+                console.log('Audio data sent successfully');
+            } catch (err) {
+                console.error('Error preparing audio data:', err);
+            }
+        };
+        
+        reader.onerror = function(err) {
+            console.error('Error reading audio data:', err);
+        };
+        
+        reader.readAsDataURL(wavData);
+    } catch (err) {
+        console.error('Error creating WAV data:', err);
+    }
+}
+
+// Create WAV blob from audio data with validation
+function createWavBlob(audioData, sampleRate) {
+    // Check if audio data is valid
+    if (!audioData || audioData.length === 0) {
+        console.warn('Empty audio data received');
+        // Return a tiny silent audio snippet instead
+        audioData = new Float32Array(100).fill(0);
+    }
     
-    reader.readAsDataURL(wavData);
+    // Function to convert Float32Array to Int16Array for WAV format
+    function floatTo16BitPCM(output, offset, input) {
+        for (let i = 0; i < input.length; i++, offset += 2) {
+            const s = Math.max(-1, Math.min(1, input[i]));
+            output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        }
+    }
+    
+    // Create WAV header
+    function writeString(view, offset, string) {
+        for (let i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
+    }
+    
+    // Create WAV file with header
+    function encodeWAV(samples) {
+        const buffer = new ArrayBuffer(44 + samples.length * 2);
+        const view = new DataView(buffer);
+        
+        // RIFF chunk descriptor
+        writeString(view, 0, 'RIFF');
+        view.setUint32(4, 36 + samples.length * 2, true);
+        writeString(view, 8, 'WAVE');
+        
+        // fmt sub-chunk
+        writeString(view, 12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true); // PCM format
+        view.setUint16(22, 1, true); // Mono channel
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true); // Byte rate
+        view.setUint16(32, 2, true); // Block align
+        view.setUint16(34, 16, true); // Bits per sample
+        
+        // data sub-chunk
+        writeString(view, 36, 'data');
+        view.setUint32(40, samples.length * 2, true);
+        floatTo16BitPCM(view, 44, samples);
+        
+        return buffer;
+    }
+    
+    // Convert audio data to TypedArray if it's a regular Array
+    const samples = Array.isArray(audioData) ? new Float32Array(audioData) : audioData;
+    
+    // Create WAV blob
+    const wavBuffer = encodeWAV(samples);
+    return new Blob([wavBuffer], { type: 'audio/wav' });
 }
 
 // Draw audio visualizer
@@ -755,59 +803,6 @@ function addSystemMessage(message) {
     
     // Auto-scroll to bottom
     elements.conversation.scrollTop = elements.conversation.scrollHeight;
-}
-
-// Create WAV blob from audio data
-function createWavBlob(audioData, sampleRate) {
-    // Function to convert Float32Array to Int16Array for WAV format
-    function floatTo16BitPCM(output, offset, input) {
-        for (let i = 0; i < input.length; i++, offset += 2) {
-            const s = Math.max(-1, Math.min(1, input[i]));
-            output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-        }
-    }
-    
-    // Create WAV header
-    function writeString(view, offset, string) {
-        for (let i = 0; i < string.length; i++) {
-            view.setUint8(offset + i, string.charCodeAt(i));
-        }
-    }
-    
-    // Create WAV file with header
-    function encodeWAV(samples) {
-        const buffer = new ArrayBuffer(44 + samples.length * 2);
-        const view = new DataView(buffer);
-        
-        // RIFF chunk descriptor
-        writeString(view, 0, 'RIFF');
-        view.setUint32(4, 36 + samples.length * 2, true);
-        writeString(view, 8, 'WAVE');
-        
-        // fmt sub-chunk
-        writeString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true);
-        view.setUint16(20, 1, true); // PCM format
-        view.setUint16(22, 1, true); // Mono channel
-        view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * 2, true); // Byte rate
-        view.setUint16(32, 2, true); // Block align
-        view.setUint16(34, 16, true); // Bits per sample
-        
-        // data sub-chunk
-        writeString(view, 36, 'data');
-        view.setUint32(40, samples.length * 2, true);
-        floatTo16BitPCM(view, 44, samples);
-        
-        return buffer;
-    }
-    
-    // Convert audio data to TypedArray if it's a regular Array
-    const samples = Array.isArray(audioData) ? new Float32Array(audioData) : audioData;
-    
-    // Create WAV blob
-    const wavBuffer = encodeWAV(samples);
-    return new Blob([wavBuffer], { type: 'audio/wav' });
 }
 
 // Downsample audio buffer to target sample rate

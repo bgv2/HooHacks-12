@@ -55,27 +55,71 @@ active_clients = {}  # Map client_id to client context
 def decode_audio_data(audio_data: str) -> torch.Tensor:
     """Decode base64 audio data to a torch tensor"""
     try:
+        # Skip empty audio data
+        if not audio_data:
+            print("Empty audio data received")
+            return torch.zeros(generator.sample_rate // 2)  # 0.5 seconds of silence
+            
         # Extract the actual base64 content
         if ',' in audio_data:
             audio_data = audio_data.split(',')[1]
-        
+            
         # Decode base64 audio data
-        binary_data = base64.b64decode(audio_data)
+        try:
+            binary_data = base64.b64decode(audio_data)
+            print(f"Decoded base64 data: {len(binary_data)} bytes")
+        except Exception as e:
+            print(f"Base64 decoding error: {str(e)}")
+            return torch.zeros(generator.sample_rate // 2)
         
+        # Debug: save the raw binary data to examine with external tools
+        debug_path = os.path.join(base_dir, "debug_incoming.wav") 
+        with open(debug_path, 'wb') as f:
+            f.write(binary_data)
+        print(f"Saved debug file to {debug_path}")
+            
         # Load audio from binary data
-        with BytesIO(binary_data) as temp_file:
-            audio_tensor, sample_rate = torchaudio.load(temp_file, format="wav")
+        try:
+            with BytesIO(binary_data) as temp_file:
+                audio_tensor, sample_rate = torchaudio.load(temp_file, format="wav")
+                print(f"Loaded audio: shape={audio_tensor.shape}, sample_rate={sample_rate}Hz")
+                
+                # Check if audio is valid
+                if audio_tensor.numel() == 0 or torch.isnan(audio_tensor).any():
+                    print("Warning: Empty or invalid audio data detected")
+                    return torch.zeros(generator.sample_rate // 2)
+        except Exception as e:
+            print(f"Audio loading error: {str(e)}")
+            # Try saving to a temporary file instead of loading from BytesIO
+            try:
+                temp_path = os.path.join(base_dir, "temp_incoming.wav")
+                with open(temp_path, 'wb') as f:
+                    f.write(binary_data)
+                print(f"Trying to load from file: {temp_path}")
+                audio_tensor, sample_rate = torchaudio.load(temp_path, format="wav")
+                print(f"Loaded from file: shape={audio_tensor.shape}, sample_rate={sample_rate}Hz")
+                os.remove(temp_path)
+            except Exception as e2:
+                print(f"Secondary audio loading error: {str(e2)}")
+                return torch.zeros(generator.sample_rate // 2)
         
         # Resample if needed
         if sample_rate != generator.sample_rate:
-            audio_tensor = torchaudio.functional.resample(
-                audio_tensor.squeeze(0), 
-                orig_freq=sample_rate, 
-                new_freq=generator.sample_rate
-            )
+            try:
+                print(f"Resampling from {sample_rate}Hz to {generator.sample_rate}Hz")
+                audio_tensor = torchaudio.functional.resample(
+                    audio_tensor.squeeze(0), 
+                    orig_freq=sample_rate, 
+                    new_freq=generator.sample_rate
+                )
+                print(f"Resampled audio shape: {audio_tensor.shape}")
+            except Exception as e:
+                print(f"Resampling error: {str(e)}")
+                return torch.zeros(generator.sample_rate // 2)
         else:
             audio_tensor = audio_tensor.squeeze(0)
             
+        print(f"Final audio tensor shape: {audio_tensor.shape}")
         return audio_tensor
     except Exception as e:
         print(f"Error decoding audio: {str(e)}")

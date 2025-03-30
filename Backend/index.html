@@ -1,4 +1,3 @@
-/index.html
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -93,6 +92,16 @@
         let mediaRecorder;
         let audioChunks = [];
         let isRecording = false;
+        let audioContext;
+        let streamProcessor;
+        let isStreaming = false;
+        let streamButton;
+        let isSpeaking = false;
+        let silenceTimer = null;
+        let energyWindow = [];
+        const ENERGY_WINDOW_SIZE = 10;
+        const CLIENT_SILENCE_THRESHOLD = 0.01;
+        const CLIENT_SILENCE_DURATION_MS = 1000; // 1 second
         
         // DOM elements
         const conversationEl = document.getElementById('conversation');
@@ -101,6 +110,271 @@
         const sendTextBtn = document.getElementById('sendText');
         const recordAudioBtn = document.getElementById('recordAudio');
         const clearContextBtn = document.getElementById('clearContext');
+        
+        // Add streaming button to the input row
+        window.addEventListener('load', () => {
+            const inputRow = document.querySelector('.input-row:nth-child(2)');
+            streamButton = document.createElement('button');
+            streamButton.id = 'streamAudio';
+            streamButton.textContent = 'Start Streaming';
+            streamButton.addEventListener('click', toggleStreaming);
+            inputRow.appendChild(streamButton);
+            
+            connectWebSocket();
+            setupRecording();
+            setupAudioContext();
+        });
+        
+        // Setup audio context for streaming
+        function setupAudioContext() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log('Audio context setup completed');
+            } catch (err) {
+                console.error('Error setting up audio context:', err);
+                addSystemMessage(`Audio context error: ${err.message}`);
+            }
+        }
+        
+        // Toggle audio streaming
+        async function toggleStreaming() {
+            if (isStreaming) {
+                stopStreaming();
+            } else {
+                startStreaming();
+            }
+        }
+        
+        // Start audio streaming with silence detection
+        async function startStreaming() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const speaker = parseInt(speakerSelectEl.value);
+                
+                isStreaming = true;
+                isSpeaking = false;
+                energyWindow = [];
+                
+                streamButton.textContent = 'Speaking...';
+                streamButton.classList.add('recording');
+                
+                // Create audio processor node
+                const source = audioContext.createMediaStreamSource(stream);
+                streamProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                // Process and send audio data
+                streamProcessor.onaudioprocess = function(e) {
+                    const audioData = e.inputBuffer.getChannelData(0);
+                    
+                    // Calculate energy (volume) for silence detection
+                    const energy = calculateAudioEnergy(audioData);
+                    updateEnergyWindow(energy);
+                    
+                    // Check if currently silent
+                    const avgEnergy = calculateAverageEnergy();
+                    const isSilent = avgEnergy < CLIENT_SILENCE_THRESHOLD;
+                    
+                    // Handle silence/speech transitions for visual feedback
+                    handleSpeechState(isSilent);
+                    
+                    // Continue processing audio regardless of silence state
+                    const downsampled = downsampleBuffer(audioData, audioContext.sampleRate, 24000);
+                    sendAudioChunk(downsampled, speaker);
+                };
+                
+                // Connect the nodes
+                source.connect(streamProcessor);
+                streamProcessor.connect(audioContext.destination);
+                
+                addSystemMessage('Audio streaming started - speak naturally and pause when finished');
+                
+            } catch (err) {
+                console.error('Error starting audio stream:', err);
+                addSystemMessage(`Streaming error: ${err.message}`);
+                isStreaming = false;
+                streamButton.textContent = 'Start Streaming';
+                streamButton.classList.remove('recording');
+            }
+        }
+        
+        // Calculate audio energy (volume)
+        function calculateAudioEnergy(buffer) {
+            let sum = 0;
+            for (let i = 0; i < buffer.length; i++) {
+                sum += Math.abs(buffer[i]);
+            }
+            return sum / buffer.length;
+        }
+        
+        // Update the sliding energy window
+        function updateEnergyWindow(energy) {
+            energyWindow.push(energy);
+            if (energyWindow.length > ENERGY_WINDOW_SIZE) {
+                energyWindow.shift();
+            }
+        }
+        
+        // Calculate average energy from the window
+        function calculateAverageEnergy() {
+            if (energyWindow.length === 0) return 0;
+            return energyWindow.reduce((sum, val) => sum + val, 0) / energyWindow.length;
+        }
+        
+        // Handle speech state changes and visual feedback
+        function handleSpeechState(isSilent) {
+            if (isSpeaking && isSilent) {
+                // Transition from speaking to silence
+                if (!silenceTimer) {
+                    silenceTimer = setTimeout(() => {
+                        // Silence persisted long enough
+                        streamButton.textContent = 'Processing...';
+                        streamButton.style.backgroundColor = '#FFA500'; // Orange
+                        addSystemMessage('Detected pause in speech, processing response...');
+                    }, CLIENT_SILENCE_DURATION_MS);
+                }
+            } else if (!isSpeaking && !isSilent) {
+                // Transition from silence to speaking
+                isSpeaking = true;
+                streamButton.textContent = 'Speaking...';
+                streamButton.style.backgroundColor = '#f44336'; // Red
+                
+                // Clear any pending silence timer
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                }
+            } else if (isSpeaking && !isSilent) {
+                // Still speaking, reset any silence timer
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                }
+            }
+            
+            // Update speaking state
+            if (!isSilent) {
+                isSpeaking = true;
+            }
+        }
+        
+        // Send audio chunk to server
+        function sendAudioChunk(audioData, speaker) {
+            const wavData = createWavBlob(audioData, 24000);
+            const reader = new FileReader();
+            
+            reader.onloadend = function() {
+                const base64data = reader.result;
+                
+                // Send to server
+                ws.send(JSON.stringify({
+                    action: 'stream_audio',
+                    speaker: speaker,
+                    audio: base64data
+                }));
+            };
+            
+            reader.readAsDataURL(wavData);
+        }
+        
+        // Stop audio streaming
+        function stopStreaming() {
+            if (streamProcessor) {
+                streamProcessor.disconnect();
+                streamProcessor = null;
+            }
+            
+            // Clear any pending silence timer
+            if (silenceTimer) {
+                clearTimeout(silenceTimer);
+                silenceTimer = null;
+            }
+            
+            isStreaming = false;
+            isSpeaking = false;
+            energyWindow = [];
+            
+            streamButton.textContent = 'Start Streaming';
+            streamButton.classList.remove('recording');
+            streamButton.style.backgroundColor = ''; // Reset to default
+            
+            addSystemMessage('Audio streaming stopped');
+            
+            // Send stop streaming signal to server
+            ws.send(JSON.stringify({
+                action: 'stop_streaming',
+                speaker: parseInt(speakerSelectEl.value)
+            }));
+        }
+        
+        // Downsample audio buffer to target sample rate
+        function downsampleBuffer(buffer, sampleRate, targetSampleRate) {
+            if (targetSampleRate === sampleRate) {
+                return buffer;
+            }
+            
+            const sampleRateRatio = sampleRate / targetSampleRate;
+            const newLength = Math.round(buffer.length / sampleRateRatio);
+            const result = new Float32Array(newLength);
+            
+            let offsetResult = 0;
+            let offsetBuffer = 0;
+            
+            while (offsetResult < result.length) {
+                const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+                let accum = 0, count = 0;
+                
+                for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+                    accum += buffer[i];
+                    count++;
+                }
+                
+                result[offsetResult] = accum / count;
+                offsetResult++;
+                offsetBuffer = nextOffsetBuffer;
+            }
+            
+            return result;
+        }
+        
+        // Create WAV blob from Float32Array
+        function createWavBlob(samples, sampleRate) {
+            const buffer = new ArrayBuffer(44 + samples.length * 2);
+            const view = new DataView(buffer);
+            
+            // RIFF chunk descriptor
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + samples.length * 2, true);
+            writeString(view, 8, 'WAVE');
+            
+            // fmt sub-chunk
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);     // PCM format
+            view.setUint16(22, 1, true);     // Mono channel
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            
+            // data sub-chunk
+            writeString(view, 36, 'data');
+            view.setUint32(40, samples.length * 2, true);
+            
+            // Write the PCM samples
+            const volume = 0.5;
+            for (let i = 0; i < samples.length; i++) {
+                const sample = Math.max(-1, Math.min(1, samples[i]));
+                view.setInt16(44 + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+            }
+            
+            return new Blob([buffer], { type: 'audio/wav' });
+        }
+        
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
         
         // Connect to WebSocket
         function connectWebSocket() {
@@ -125,10 +399,19 @@
                     
                     // Add message to conversation
                     addAIMessage(response.audio);
+                    
+                    // Reset the streaming button if we're still in streaming mode
+                    if (isStreaming) {
+                        streamButton.textContent = 'Speaking...';
+                        streamButton.style.backgroundColor = '#f44336'; // Back to red
+                        isSpeaking = false; // Reset speaking state
+                    }
                 } else if (response.type === 'error') {
                     addSystemMessage(`Error: ${response.message}`);
                 } else if (response.type === 'context_updated') {
                     addSystemMessage(response.message);
+                } else if (response.type === 'streaming_status') {
+                    addSystemMessage(`Streaming ${response.status}`);
                 }
             };
             

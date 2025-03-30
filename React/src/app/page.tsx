@@ -78,39 +78,67 @@ export default function Home() {
 			<div className="space-y-7  items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
 				
 				<h1
-  className="space-y-3 text-6xl text-lime-500 subpixel-antialiased font-bold animate-fadeIn"
-  style={{ fontFamily: "'Nunito', sans-serif" }}
+  className="space-y-3 text-4xl text-lime-500 subpixel-antialiased animate-fadeIn"
+  style={{ animationDelay: "0s", fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif' }}
 >
-  Welcome to Fauxcall
+  welcome to Fauxcall
 </h1>
 
 
-				<p>
-					We empower you to feel safe, whenever and wherever.
-				</p>
+<p
+  className="text-xl text-gray-700"
+  style={{
+    animation: 'fadeIn 1s ease-in-out forwards',
+    animationDelay: '1s',
+    opacity: 0,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+  }}
+>
+  We empower you to feel safe.
+</p>
 
-				<p>
-					Make an account to begin.
-				</p>
+<p
+  className="text-xl text-gray-700"
+  style={{
+    animation: 'fadeIn 1s ease-in-out forwards',
+    animationDelay: '2s',
+    opacity: 0,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+  }}
+>
+  Whenever and wherever.
+</p>
+
+
+<div
+  style={{
+    animation: 'fadeIn 1s ease-in-out forwards',
+    animationDelay: '3s',
+    opacity: 0,
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+  }}
+>
+<div className="space-y-20 flex flex-col items-center sm:items-start">
+  <a href="/auth/login?screen_hint=signup">
+    <button className="p-4 h-16 w-32 mb-10 mt-4 text-xl text-green-400 border-2 border-gray-200 rounded-md transition-opacity duration-1000 opacity-0 animate-fadeIn delay-0">
+      Sign up
+    </button>
+  </a>
+
+  <p className="mt-16 animate-fadeIn delay-1 opacity-0">
+    Already have an account?
+  </p>
+
+  <a href="/auth/login">
+    <button className="p-4 h-16 w-32 mt-10 text-xl text-green-300 border-2 border-violet-900 rounded-md transition-opacity duration-1000 opacity-0 animate-fadeIn delay-2">
+      Log in
+    </button>
+  </a>
+</div>
 
 
 
-				<main className="space-x-2 flex flex-row gap-[32px] row-start-2 items-center sm:items-start">
-					<a href="/auth/login?screen_hint=signup">
-						<button className="box-content w-32 border-2 h-16 text-2xl bg-violet-900 text-green-300">
-							Sign up
-						</button>
-					</a>
-				</main>
-					<p>
-					
-					Already have an account?
-				</p>
-					<a href="/auth/login">
-						<button className="box-content w-32 border-2 h-16 text-2xl bg-violet-900 text-green-400">
-							Log in
-						</button>
-					</a>
+</div>
 				
 
 			</div>

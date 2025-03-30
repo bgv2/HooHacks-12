@@ -511,31 +511,29 @@
                 // Create audio source from stream
                 const source = audioContext.createMediaStreamSource(mediaStream);
                 
-                // Create ScriptProcessor for audio processing
-                const bufferSize = 4096;
-                audioProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+                // Load and register the audio worklet
+                await audioContext.audioWorklet.addModule('/static/js/audio-processor.js');
                 
-                // Process audio data
-                audioProcessor.onaudioprocess = (event) => {
+                // Create the audio worklet node
+                const workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+                
+                // Listen for messages from the processor
+                workletNode.port.onmessage = (event) => {
                     if (!isListening || isAiSpeaking) return;
                     
-                    const input = event.inputBuffer.getChannelData(0);
-                    const audioData = convertFloat32ToInt16(input);
-                    sendAudioChunk(audioData);
+                    // Process audio data
+                    const audioData = event.data.audioData;
+                    const audioInt16 = convertFloat32ToInt16(audioData);
+                    sendAudioChunk(audioInt16);
                 };
                 
                 // Connect the nodes
-                source.connect(audioProcessor);
-                audioProcessor.connect(audioContext.destination);
+                source.connect(workletNode);
+                workletNode.connect(audioContext.destination);
             }
             
             // Clean up audio resources
             function cleanupAudio() {
-                if (audioProcessor) {
-                    audioProcessor.disconnect();
-                    audioProcessor = null;
-                }
-                
                 if (mediaStream) {
                     mediaStream.getTracks().forEach(track => track.stop());
                     mediaStream = null;
@@ -718,6 +716,26 @@
                 loadingDiv.style.display = 'none';
             }
         });
+
+        class AudioProcessor extends AudioWorkletProcessor {
+            constructor() {
+                super();
+            }
+          
+            process(inputs, outputs) {
+                // Get input data
+                const input = inputs[0];
+                if (input.length > 0 && input[0].length > 0) {
+                    // Post the audio data to the main thread
+                    this.port.postMessage({
+                        audioData: input[0]
+                    });
+                }
+                return true; // Keep the processor alive
+            }
+        }
+          
+        registerProcessor('audio-processor', AudioProcessor);
     </script>
 </body>
 </html>

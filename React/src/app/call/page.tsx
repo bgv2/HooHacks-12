@@ -41,7 +41,11 @@ function CallPage() {
         console.log("Total chunks received:", audioChunks.current.length);
         const audioUrl = URL.createObjectURL(audioBlob);
         setAudioBlob(audioBlob);
-        console.log('media recorder type', mediaRecorderRef.current.mimeType)
+        if (mediaRecorderRef.current) {
+          console.log('media recorder type', mediaRecorderRef.current.mimeType);
+        } else {
+          console.error('MediaRecorder is null');
+        }
         console.log(audioBlob);
         setAudioUrl(audioUrl);
         audioChunks.current = []; 
@@ -65,8 +69,12 @@ function CallPage() {
 
   // Play the recorded audio
   const playAudio = () => {
-    const audio = new Audio(audioUrl);
-    audio.play();
+    if (audioUrl) {
+      const audio = new Audio(audioUrl);
+      audio.play();
+    } else {
+      console.error("Audio URL is null or undefined.");
+    }
   };
 
 

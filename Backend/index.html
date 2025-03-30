@@ -260,6 +260,47 @@
             font-size: 0.8em;
             color: #777;
         }
+
+        /* Model status indicators */
+        .model-status {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .model-indicator {
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 0.7em;
+            font-weight: bold;
+        }
+        
+        .model-indicator.loading {
+            background-color: #ffd54f;
+            color: #000;
+        }
+        
+        .model-indicator.loaded {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        .model-indicator.error {
+            background-color: #f44336;
+            color: white;
+        }
+
+        .message-timestamp {
+            font-size: 0.7em;
+            color: #888;
+            margin-top: 4px;
+            text-align: right;
+        }
+        
+        .simple-timestamp {
+            font-size: 0.8em;
+            color: #888;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
@@ -275,6 +316,13 @@
                 <div class="status-indicator">
                     <div id="statusDot" class="status-dot"></div>
                     <span id="statusText">Disconnected</span>
+                </div>
+                
+                <!-- Add this model status panel -->
+                <div class="model-status">
+                    <div id="csmStatus" class="model-indicator loading" title="Loading CSM model...">CSM</div>
+                    <div id="asrStatus" class="model-indicator loading" title="Loading ASR model...">ASR</div>
+                    <div id="llmStatus" class="model-indicator loading" title="Loading LLM model...">LLM</div>
                 </div>
             </div>
             <div id="conversation" class="conversation"></div>

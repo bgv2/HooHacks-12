@@ -1,7 +1,11 @@
+flask==2.2.5
+flask-socketio==5.3.6
+flask-cors==4.0.0
 torch==2.4.0
 torchaudio==2.4.0
 tokenizers==0.21.0
 transformers==4.49.0
+librosa==0.10.1
 huggingface_hub==0.28.1
 moshi==0.2.2
 torchtune==0.4.0

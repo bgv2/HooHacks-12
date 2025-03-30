@@ -105,8 +105,25 @@ function setupSocketConnection() {
     });
     
     state.socket.on('error', (data) => {
-        addSystemMessage(`Error: ${data.message}`);
         console.error('Server error:', data.message);
+        
+        // Make the error more user-friendly
+        let userMessage = data.message;
+        
+        // Check for common errors and provide more helpful messages
+        if (data.message.includes('Models still loading')) {
+            userMessage = 'The AI models are still loading. Please wait a moment and try again.';
+        } else if (data.message.includes('No speech detected')) {
+            userMessage = 'No speech was detected. Please speak clearly and try again.';
+        }
+        
+        addSystemMessage(`Error: ${userMessage}`);
+        
+        // Reset button state if it was processing
+        if (elements.streamButton.classList.contains('processing')) {
+            elements.streamButton.classList.remove('processing');
+            elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Start Conversation';
+        }
     });
     
     // Register message handlers
@@ -115,6 +132,9 @@ function setupSocketConnection() {
     state.socket.on('streaming_status', handleStreamingStatus);
     state.socket.on('processing_status', handleProcessingStatus);
     
+    // Add model status handlers
+    state.socket.on('model_status', handleModelStatusUpdate);
+
     // Handlers for incremental audio streaming
     state.socket.on('audio_response_start', handleAudioResponseStart);
     state.socket.on('audio_response_chunk', handleAudioResponseChunk);
@@ -189,6 +209,27 @@ function startStreaming() {
         return;
     }
     
+    // Check if models are loaded via the API
+    fetch('/api/status')
+        .then(response => response.json())
+        .then(data => {
+            if (!data.models.generator || !data.models.asr || !data.models.llm) {
+                addSystemMessage('Still loading AI models. Please wait...');
+                return;
+            }
+            
+            // Continue with recording if models are loaded
+            initializeRecording();
+        })
+        .catch(error => {
+            console.error('Error checking model status:', error);
+            // Try anyway, the server will respond with an error if models aren't ready
+            initializeRecording();
+        });
+}
+
+// Extracted the recording initialization to a separate function
+function initializeRecording() {
     // Request microphone access
     navigator.mediaDevices.getUserMedia({ audio: true, video: false })
         .then(stream => {
@@ -600,6 +641,13 @@ function addMessage(text, type) {
     textElement.textContent = text;
     messageDiv.appendChild(textElement);
     
+    // Add timestamp to every message
+    const timestamp = new Date().toLocaleTimeString();
+    const timeLabel = document.createElement('div');
+    timeLabel.className = 'message-timestamp';
+    timeLabel.textContent = timestamp;
+    messageDiv.appendChild(timeLabel);
+    
     elements.conversation.appendChild(messageDiv);
     
     // Auto-scroll to the bottom
@@ -668,6 +716,13 @@ function handleTranscription(data) {
         // Add the timestamp elements to the message
         messageDiv.appendChild(toggleButton);
         messageDiv.appendChild(timestampsContainer);
+    } else {
+        // No timestamp data available - add a simple timestamp for the entire message
+        const timestamp = new Date().toLocaleTimeString();
+        const timeLabel = document.createElement('div');
+        timeLabel.className = 'simple-timestamp';
+        timeLabel.textContent = timestamp;
+        messageDiv.appendChild(timeLabel);
     }
     
     return messageDiv;
@@ -852,6 +907,52 @@ function finalizeStreamingAudio() {
     streamingAudio.receivedChunks = 0;
     streamingAudio.messageElement = null;
     streamingAudio.audioElement = null;
+}
+
+// Handle model status updates
+function handleModelStatusUpdate(data) {
+    const { model, status, message } = data;
+    
+    if (status === 'loaded') {
+        console.log(`Model ${model} loaded successfully`);
+        addSystemMessage(`${model.toUpperCase()} model loaded successfully`);
+        
+        // Update UI to show model is ready
+        const modelStatusElement = document.getElementById(`${model}Status`);
+        if (modelStatusElement) {
+            modelStatusElement.classList.remove('loading');
+            modelStatusElement.classList.add('loaded');
+            modelStatusElement.title = 'Model loaded successfully';
+        }
+        
+        // Check if the required models are loaded to enable conversation
+        checkAllModelsLoaded();
+    } else if (status === 'error') {
+        console.error(`Error loading ${model} model: ${message}`);
+        addSystemMessage(`Error loading ${model.toUpperCase()} model: ${message}`);
+        
+        // Update UI to show model loading failed
+        const modelStatusElement = document.getElementById(`${model}Status`);
+        if (modelStatusElement) {
+            modelStatusElement.classList.remove('loading');
+            modelStatusElement.classList.add('error');
+            modelStatusElement.title = `Error: ${message}`;
+        }
+    }
+}
+
+// Check if all required models are loaded and enable UI accordingly
+function checkAllModelsLoaded() {
+    // When all models are loaded, enable the stream button if it was disabled
+    const allLoaded = 
+        document.getElementById('csmStatus')?.classList.contains('loaded') &&
+        document.getElementById('asrStatus')?.classList.contains('loaded') &&
+        document.getElementById('llmStatus')?.classList.contains('loaded');
+    
+    if (allLoaded) {
+        elements.streamButton.disabled = false;
+        addSystemMessage('All models loaded. Ready for conversation!');
+    }
 }
 
 // Add CSS styles for new UI elements

@@ -627,7 +627,59 @@ function addSystemMessage(text) {
 // Handle transcription response from server
 function handleTranscription(data) {
     const speaker = data.speaker === 0 ? 'user' : 'ai';
-    addMessage(data.text, speaker);
+    
+    // Create the message div
+    const messageDiv = addMessage(data.text, speaker);
+    
+    // If we have detailed segments from WhisperX, add timestamps
+    if (data.segments && data.segments.length > 0) {
+        // Add a timestamps container
+        const timestampsContainer = document.createElement('div');
+        timestampsContainer.className = 'timestamps-container';
+        timestampsContainer.style.display = 'none'; // Hidden by default
+        
+        // Add a toggle button
+        const toggleButton = document.createElement('button');
+        toggleButton.className = 'timestamp-toggle';
+        toggleButton.textContent = 'Show Timestamps';
+        toggleButton.onclick = function() {
+            const isHidden = timestampsContainer.style.display === 'none';
+            timestampsContainer.style.display = isHidden ? 'block' : 'none';
+            toggleButton.textContent = isHidden ? 'Hide Timestamps' : 'Show Timestamps';
+        };
+        
+        // Add timestamps for each segment
+        data.segments.forEach(segment => {
+            const timestampDiv = document.createElement('div');
+            timestampDiv.className = 'timestamp';
+            
+            // Format start and end times
+            const startTime = formatTime(segment.start);
+            const endTime = formatTime(segment.end);
+            
+            timestampDiv.innerHTML = `
+                <span class="time">[${startTime} - ${endTime}]</span>
+                <span class="text">${segment.text}</span>
+            `;
+            
+            timestampsContainer.appendChild(timestampDiv);
+        });
+        
+        // Add the timestamp elements to the message
+        messageDiv.appendChild(toggleButton);
+        messageDiv.appendChild(timestampsContainer);
+    }
+    
+    return messageDiv;
+}
+
+// Helper function to format time in seconds to MM:SS.ms format
+function formatTime(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    const ms = Math.floor((seconds % 1) * 1000);
+    
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(3, '0')}`;
 }
 
 // Handle context update from server
@@ -804,7 +856,7 @@ function finalizeStreamingAudio() {
 
 // Add CSS styles for new UI elements
 document.addEventListener('DOMContentLoaded', function() {
-    // Add styles for processing state
+    // Add styles for processing state and timestamps
     const style = document.createElement('style');
     style.textContent = `
         .message.processing {
@@ -832,6 +884,44 @@ document.addEventListener('DOMContentLoaded', function() {
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
+        }
+        
+        /* Timestamp styles */
+        .timestamp-toggle {
+            font-size: 0.75em;
+            padding: 4px 8px;
+            margin-top: 8px;
+            background-color: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .timestamp-toggle:hover {
+            background-color: #e0e0e0;
+        }
+        
+        .timestamps-container {
+            margin-top: 8px;
+            padding: 8px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+            font-size: 0.85em;
+        }
+        
+        .timestamp {
+            margin-bottom: 4px;
+            padding: 2px 0;
+        }
+        
+        .timestamp .time {
+            color: #666;
+            font-family: monospace;
+            margin-right: 8px;
+        }
+        
+        .timestamp .text {
+            color: #333;
         }
     `;
     document.head.appendChild(style);

@@ -42,7 +42,8 @@ const state = {
     silenceTimer: null,
     volumeUpdateInterval: null,
     visualizerAnimationFrame: null,
-    currentSpeaker: 0
+    currentSpeaker: 0,
+    aiSpeakerId: 1  // Define the AI's speaker ID to match server.py
 };
 
 // Visualizer variables
@@ -674,10 +675,14 @@ function handleAudioResponseChunk(data) {
     streamingAudio.chunks[data.chunk_index] = data.chunk;
     streamingAudio.receivedChunks++;
     
+    // Store audio element reference for later use
+    streamingAudio.audioElement = audioElement;
+    
     // Add to the conversation
     const messages = elements.conversation.querySelectorAll('.message.ai');
     if (messages.length > 0) {
         const lastAiMessage = messages[messages.length - 1];
+        streamingAudio.messageElement = lastAiMessage;
         
         // Replace existing audio player if there is one
         const existingPlayer = lastAiMessage.querySelector('.audio-player');
@@ -690,6 +695,7 @@ function handleAudioResponseChunk(data) {
         // Create a new message for the AI response
         const aiMessage = document.createElement('div');
         aiMessage.className = 'message ai';
+        streamingAudio.messageElement = aiMessage;
         
         if (streamingAudio.text) {
             const textElement = document.createElement('p');

@@ -87,6 +87,7 @@ class Conversation:
         self.session_id = session_id
         self.segments: List[Segment] = []
         self.current_speaker = 0
+        self.ai_speaker_id = 1  # Add this property
         self.last_activity = time.time()
         self.is_processing = False
     
@@ -209,7 +210,9 @@ def process_audio_queue(session_id, q):
                 continue
             except Exception as e:
                 logger.error(f"Error processing audio for {session_id}: {str(e)}")
-                socketio.emit('error', {'message': str(e)}, room=session_id)
+                # Create an app context for the socket emit
+                with app.app_context():
+                    socketio.emit('error', {'message': str(e)}, room=session_id)
     finally:
         logger.info(f"Ending processing thread for session: {session_id}")
         # Clean up when thread is done
@@ -222,7 +225,8 @@ def process_audio_queue(session_id, q):
 def process_audio_and_respond(session_id, data):
     """Process audio data and generate a response"""
     if models.generator is None or models.asr is None or models.llm is None:
-        socketio.emit('error', {'message': 'Models still loading, please wait'}, room=session_id)
+        with app.app_context():
+            socketio.emit('error', {'message': 'Models still loading, please wait'}, room=session_id)
         return
     
     conversation = active_conversations[session_id]
@@ -260,7 +264,8 @@ def process_audio_and_respond(session_id, data):
                 )
             
             # Transcribe audio
-            socketio.emit('processing_status', {'status': 'transcribing'}, room=session_id)
+            with app.app_context():
+                socketio.emit('processing_status', {'status': 'transcribing'}, room=session_id)
             
             # Use the ASR pipeline to transcribe
             transcription_result = models.asr(
@@ -271,7 +276,8 @@ def process_audio_and_respond(session_id, data):
             
             # If no text was recognized, don't process further
             if not user_text:
-                socketio.emit('error', {'message': 'No speech detected'}, room=session_id)
+                with app.app_context():
+                    socketio.emit('error', {'message': 'No speech detected'}, room=session_id)
                 return
             
             # Add the user's message to conversation history
@@ -282,13 +288,15 @@ def process_audio_and_respond(session_id, data):
             )
             
             # Send transcription to client
-            socketio.emit('transcription', {
-                'text': user_text, 
-                'speaker': speaker_id
-            }, room=session_id)
+            with app.app_context():
+                socketio.emit('transcription', {
+                    'text': user_text, 
+                    'speaker': speaker_id
+                }, room=session_id)
             
             # Generate AI response using Llama
-            socketio.emit('processing_status', {'status': 'generating'}, room=session_id)
+            with app.app_context():
+                socketio.emit('processing_status', {'status': 'generating'}, room=session_id)
             
             # Create prompt from conversation history
             conversation_history = ""
@@ -319,22 +327,23 @@ def process_audio_and_respond(session_id, data):
             ).strip()
             
             # Synthesize speech
-            socketio.emit('processing_status', {'status': 'synthesizing'}, room=session_id)
+            with app.app_context():
+                socketio.emit('processing_status', {'status': 'synthesizing'}, room=session_id)
+                
+                # Start sending the audio response
+                socketio.emit('audio_response_start', {
+                    'text': response_text,
+                    'total_chunks': 1,
+                    'chunk_index': 0
+                }, room=session_id)
             
-            # Generate audio with CSM
+            # Define AI speaker ID (use a consistent value for the AI's voice)
             ai_speaker_id = 1  # Use speaker 1 for AI responses
-            
-            # Start sending the audio response
-            socketio.emit('audio_response_start', {
-                'text': response_text,
-                'total_chunks': 1,
-                'chunk_index': 0
-            }, room=session_id)
             
             # Generate audio
             audio_tensor = models.generator.generate(
                 text=response_text,
-                speaker=ai_speaker_id,
+                speaker=ai_speaker_id,  # Use the local variable instead of conversation.ai_speaker_id
                 context=conversation.get_context(),
                 max_audio_length_ms=10_000,
                 temperature=0.9
@@ -343,7 +352,7 @@ def process_audio_and_respond(session_id, data):
             # Add AI response to conversation history
             ai_segment = conversation.add_segment(
                 text=response_text,
-                speaker=ai_speaker_id,
+                speaker=ai_speaker_id,  # Also use the local variable here
                 audio=audio_tensor
             )
             
@@ -362,17 +371,18 @@ def process_audio_and_respond(session_id, data):
             audio_base64 = f"data:audio/wav;base64,{base64.b64encode(wav_data).decode('utf-8')}"
             
             # Send audio chunk to client
-            socketio.emit('audio_response_chunk', {
-                'chunk': audio_base64,
-                'chunk_index': 0,
-                'total_chunks': 1,
-                'is_last': True
-            }, room=session_id)
-            
-            # Signal completion
-            socketio.emit('audio_response_complete', {
-                'text': response_text
-            }, room=session_id)
+            with app.app_context():
+                socketio.emit('audio_response_chunk', {
+                    'chunk': audio_base64,
+                    'chunk_index': 0,
+                    'total_chunks': 1,
+                    'is_last': True
+                }, room=session_id)
+                
+                # Signal completion
+                socketio.emit('audio_response_complete', {
+                    'text': response_text
+                }, room=session_id)
             
         finally:
             # Clean up temp file
@@ -381,7 +391,8 @@ def process_audio_and_respond(session_id, data):
     
     except Exception as e:
         logger.error(f"Error processing audio: {str(e)}")
-        socketio.emit('error', {'message': f'Error: {str(e)}'}, room=session_id)
+        with app.app_context():
+            socketio.emit('error', {'message': f'Error: {str(e)}'}, room=session_id)
     finally:
         # Reset processing flag
         conversation.is_processing = False

@@ -56,7 +56,7 @@ export default function Home() {
 		})
 			.then((response) => {
 				if (response.ok) {
-					alert("Contacts saved successfully!");
+					// alert("Contacts saved successfully!");
 				} else {
 					alert("Error saving contacts.");
 				}

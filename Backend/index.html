@@ -274,7 +274,6 @@
             const whisperStatus = document.getElementById('whisper-status');
             const csmStatus = document.getElementById('csm-status');
             const llmStatus = document.getElementById('llm-status');
-            const webrtcStatus = document.getElementById('webrtc-status');
             const micAnimation = document.getElementById('mic-animation');
             const loadingDiv = document.getElementById('loading');
             const loadingText = document.getElementById('loading-text');
@@ -286,14 +285,7 @@
             let isAiSpeaking = false;
             let audioContext;
             let mediaStream;
-            let audioRecorder;
             let audioProcessor;
-            const audioChunks = [];
-            
-            // WebRTC variables
-            let peerConnection;
-            let dataChannel;
-            let hasActiveConnection = false;
             
             // Audio playback
             let audioQueue = [];
@@ -302,7 +294,6 @@
             // Configuration variables
             let serverSampleRate = 24000;
             let clientSampleRate = 44100;
-            let iceServers = [];
             
             // Initialize the application
             initApp();
@@ -329,7 +320,6 @@
                     updateConnectionStatus('disconnected');
                     isConnected = false;
                     cleanupAudio();
-                    cleanupWebRTC();
                 });
                 
                 socket.on('session_ready', (data) => {
@@ -337,11 +327,13 @@
                     updateModelStatus(data);
                     clientSampleRate = data.client_sample_rate;
                     serverSampleRate = data.server_sample_rate;
-                    iceServers = data.ice_servers;
                     
-                    // Initialize WebRTC if models are available
-                    if (data.whisper_available && data.llm_available) {
-                        initializeWebRTC();
+                    // Enable start button if models are available
+                    if (data.whisper_available && data.csm_available) {
+                        startButton.disabled = false;
+                        addInfoMessage('Ready for conversation. Click "Start Listening" to begin.');
+                    } else {
+                        addInfoMessage('Some models are not available. Voice chat might not work properly.');
                     }
                 });
                 
@@ -349,10 +341,6 @@
                     console.log('Ready for speech:', data);
                     startButton.disabled = false;
                     addInfoMessage('Ready for conversation. Click "Start Listening" to begin.');
-                });
-                
-                socket.on('webrtc_signal', (data) => {
-                    handleWebRTCSignal(data);
                 });
                 
                 socket.on('transcription', (data) => {
@@ -460,98 +448,6 @@
                 llmStatus.style.color = data.llm_available ? 'green' : 'red';
             }
             
-            // Initialize WebRTC connection
-            function initializeWebRTC() {
-                if (!isConnected) return;
-                
-                const configuration = {
-                    iceServers: iceServers
-                };
-                
-                peerConnection = new RTCPeerConnection(configuration);
-                
-                // Create data channel for WebRTC communication
-                dataChannel = peerConnection.createDataChannel('audioData', {
-                    ordered: true
-                });
-                
-                dataChannel.onopen = () => {
-                    console.log('WebRTC data channel open');
-                    hasActiveConnection = true;
-                    webrtcStatus.textContent = 'Connected';
-                    webrtcStatus.style.color = 'green';
-                    socket.emit('webrtc_connected', { status: 'connected' });
-                };
-                
-                dataChannel.onclose = () => {
-                    console.log('WebRTC data channel closed');
-                    hasActiveConnection = false;
-                    webrtcStatus.textContent = 'Disconnected';
-                    webrtcStatus.style.color = 'red';
-                };
-                
-                // Handle ICE candidates
-                peerConnection.onicecandidate = (event) => {
-                    if (event.candidate) {
-                        socket.emit('webrtc_signal', {
-                            type: 'ice_candidate',
-                            candidate: event.candidate
-                        });
-                    }
-                };
-                
-                // Log ICE connection state changes
-                peerConnection.oniceconnectionstatechange = () => {
-                    console.log('ICE connection state:', peerConnection.iceConnectionState);
-                };
-                
-                // Create offer
-                peerConnection.createOffer()
-                    .then(offer => peerConnection.setLocalDescription(offer))
-                    .then(() => {
-                        socket.emit('webrtc_signal', {
-                            type: 'offer',
-                            sdp: peerConnection.localDescription
-                        });
-                    })
-                    .catch(error => {
-                        console.error('Error creating WebRTC offer:', error);
-                        webrtcStatus.textContent = 'Failed to Connect';
-                        webrtcStatus.style.color = 'red';
-                    });
-            }
-            
-            // Handle WebRTC signals from the server
-            function handleWebRTCSignal(data) {
-                if (!peerConnection) return;
-                
-                if (data.type === 'answer') {
-                    peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp))
-                        .catch(error => console.error('Error setting remote description:', error));
-                } 
-                else if (data.type === 'ice_candidate') {
-                    peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate))
-                        .catch(error => console.error('Error adding ICE candidate:', error));
-                }
-            }
-            
-            // Clean up WebRTC connection
-            function cleanupWebRTC() {
-                if (dataChannel) {
-                    dataChannel.close();
-                }
-                
-                if (peerConnection) {
-                    peerConnection.close();
-                }
-                
-                dataChannel = null;
-                peerConnection = null;
-                hasActiveConnection = false;
-                webrtcStatus.textContent = 'Not Connected';
-                webrtcStatus.style.color = 'red';
-            }
-            
             // Toggle audio listening
             function toggleListening() {
                 if (isListening) {
@@ -615,31 +511,29 @@
                 // Create audio source from stream
                 const source = audioContext.createMediaStreamSource(mediaStream);
                 
-                // Create ScriptProcessor for audio processing
-                const bufferSize = 4096;
-                audioProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+                // Load and register the audio worklet
+                await audioContext.audioWorklet.addModule('/static/js/audio-processor.js');
                 
-                // Process audio data
-                audioProcessor.onaudioprocess = (event) => {
+                // Create the audio worklet node
+                const workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+                
+                // Listen for messages from the processor
+                workletNode.port.onmessage = (event) => {
                     if (!isListening || isAiSpeaking) return;
                     
-                    const input = event.inputBuffer.getChannelData(0);
-                    const audioData = convertFloat32ToInt16(input);
-                    sendAudioChunk(audioData);
+                    // Process audio data
+                    const audioData = event.data.audioData;
+                    const audioInt16 = convertFloat32ToInt16(audioData);
+                    sendAudioChunk(audioInt16);
                 };
                 
                 // Connect the nodes
-                source.connect(audioProcessor);
-                audioProcessor.connect(audioContext.destination);
+                source.connect(workletNode);
+                workletNode.connect(audioContext.destination);
             }
             
             // Clean up audio resources
             function cleanupAudio() {
-                if (audioProcessor) {
-                    audioProcessor.disconnect();
-                    audioProcessor = null;
-                }
-                
                 if (mediaStream) {
                     mediaStream.getTracks().forEach(track => track.stop());
                     mediaStream = null;
@@ -648,8 +542,6 @@
                 if (audioContext && audioContext.state !== 'closed') {
                     audioContext.close().catch(error => console.error('Error closing AudioContext:', error));
                 }
-                
-                audioChunks.length = 0;
             }
             
             // Convert Float32Array to Int16Array for sending to server
@@ -669,7 +561,7 @@
                 // Convert to base64 for transmission
                 const base64Audio = arrayBufferToBase64(audioData.buffer);
                 
-                // Send via Socket.IO (could use WebRTC's DataChannel for lower latency in production)
+                // Send via Socket.IO
                 socket.emit('audio_stream', { audio: base64Audio });
             }
             
@@ -824,6 +716,26 @@
                 loadingDiv.style.display = 'none';
             }
         });
+
+        class AudioProcessor extends AudioWorkletProcessor {
+            constructor() {
+                super();
+            }
+          
+            process(inputs, outputs) {
+                // Get input data
+                const input = inputs[0];
+                if (input.length > 0 && input[0].length > 0) {
+                    // Post the audio data to the main thread
+                    this.port.postMessage({
+                        audioData: input[0]
+                    });
+                }
+                return true; // Keep the processor alive
+            }
+        }
+          
+        registerProcessor('audio-processor', AudioProcessor);
     </script>
 </body>
 </html>

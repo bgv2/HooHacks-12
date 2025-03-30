@@ -152,7 +152,10 @@ def index():
     """Serve the main interface"""
     return render_template('index.html')
 
-
+@app.route('/static/js/voice-chat.js')
+def serve_voice_chat_js():
+    """Serve the JavaScript file"""
+    return app.send_static_file('js/voice-chat.js')
 
 @socketio.on('connect')
 def handle_connect():
@@ -180,10 +183,6 @@ def handle_connect():
         'should_interrupt_ai': False,
         'ai_stream_queue': queue.Queue(),
         
-        # WebRTC status
-        'webrtc_connected': False,
-        'webrtc_peer_id': None,
-        
         # Processing flags
         'is_processing': False,
         'pending_user_audio': None
@@ -195,9 +194,10 @@ def handle_connect():
         'csm_available': csm_generator is not None,
         'llm_available': llm_model is not None,
         'client_sample_rate': CLIENT_SAMPLE_RATE,
-        'server_sample_rate': getattr(csm_generator, 'sample_rate', 24000) if csm_generator else 24000,
-        'ice_servers': ICE_SERVERS
+        'server_sample_rate': getattr(csm_generator, 'sample_rate', 24000) if csm_generator else 24000
     })
+    
+    emit('ready_for_speech', {'message': 'Ready to start conversation'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -341,10 +341,10 @@ def on_speech_started(session_id):
     # If AI is speaking, we need to interrupt it
     if session['is_ai_speaking']:
         session['should_interrupt_ai'] = True
-        emit('ai_interrupted_by_user', room=session_id)
+        socketio.emit('ai_interrupted_by_user', room=session_id)
     
     # Notify client that we detected speech
-    emit('user_speech_start', room=session_id)
+    socketio.emit('user_speech_start', room=session_id)
 
 def on_speech_ended(session_id):
     """Handle end of user speech segment"""
@@ -399,12 +399,12 @@ def on_speech_ended(session_id):
         ).start()
         
         # Notify client that processing has started
-        emit('processing_speech', room=session_id)
+        socketio.emit('processing_speech', room=session_id)
     
     except Exception as e:
         print(f"Error preparing audio: {e}")
         session['is_processing'] = False
-        emit('error', {'message': f'Error processing audio: {str(e)}'}, room=session_id)
+        socketio.emit('error', {'message': f'Error processing audio: {str(e)}'}, room=session_id)
 
 def process_user_utterance(session_id, audio_path, audio_tensor):
     """Process user utterance, transcribe and generate response"""
@@ -427,7 +427,7 @@ def process_user_utterance(session_id, audio_path, audio_tensor):
         
         # Check if we got meaningful text
         if not user_text or len(user_text.strip()) < 2:
-            emit('no_speech_detected', room=session_id)
+            socketio.emit('no_speech_detected', room=session_id)  # CHANGED: emit → socketio.emit
             session['is_processing'] = False
             return
         
@@ -448,13 +448,13 @@ def process_user_utterance(session_id, audio_path, audio_tensor):
         })
         
         # Send transcription to client
-        emit('transcription', {'text': user_text}, room=session_id)
+        socketio.emit('transcription', {'text': user_text}, room=session_id)  # CHANGED: emit → socketio.emit
         
         # Generate AI response
         ai_response = generate_ai_response(user_text, session_id)
         
         # Send text response to client
-        emit('ai_response_text', {'text': ai_response}, room=session_id)
+        socketio.emit('ai_response_text', {'text': ai_response}, room=session_id)  # CHANGED: emit → socketio.emit
         
         # Update conversation history
         session['conversation_history'].append({
@@ -476,7 +476,7 @@ def process_user_utterance(session_id, audio_path, audio_tensor):
     
     except Exception as e:
         print(f"Error processing utterance: {e}")
-        emit('error', {'message': f'Error: {str(e)}'}, room=session_id)
+        socketio.emit('error', {'message': f'Error: {str(e)}'}, room=session_id)  # CHANGED: emit → socketio.emit
     
     finally:
         # Clear processing flag
@@ -540,11 +540,13 @@ def generate_ai_response(user_text, session_id):
             # Generate response
             inputs = llm_tokenizer(prompt, return_tensors="pt").to(device)
             output = llm_model.generate(
-                inputs.input_ids, 
+                inputs.input_ids,
+                attention_mask=inputs.attention_mask,  # Add attention mask
                 max_new_tokens=100,  # Keep responses shorter for voice
                 temperature=0.7,
                 top_p=0.9,
-                do_sample=True
+                do_sample=True,
+                pad_token_id=llm_tokenizer.eos_token_id  # Explicitly set pad_token_id
             )
             
             response = llm_tokenizer.decode(output[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
@@ -587,7 +589,7 @@ def stream_ai_response(text, session_id):
     
     try:
         # Signal start of AI speech
-        emit('ai_speech_start', room=session_id)
+        socketio.emit('ai_speech_start', room=session_id)  # CHANGED: emit → socketio.emit
         
         # Use the last few conversation segments as context (up to 4)
         context_segments = session['segments'][-4:] if len(session['segments']) > 4 else session['segments']
@@ -643,15 +645,15 @@ def stream_ai_response(text, session_id):
         if session_id in user_sessions:
             session['is_ai_speaking'] = False
             session['is_turn_active'] = False  # End conversation turn
-            socketio.emit('ai_speech_end', room=session_id)
+            socketio.emit('ai_speech_end', room=session_id)  # CHANGED: emit → socketio.emit
     
     except Exception as e:
         print(f"Error streaming AI response: {e}")
         if session_id in user_sessions:
             session['is_ai_speaking'] = False
             session['is_turn_active'] = False
-            socketio.emit('error', {'message': f'Error generating audio: {str(e)}'}, room=session_id)
-            socketio.emit('ai_speech_end', room=session_id)
+            socketio.emit('error', {'message': f'Error generating audio: {str(e)}'}, room=session_id)  # CHANGED: emit → socketio.emit
+            socketio.emit('ai_speech_end', room=session_id)  # CHANGED: emit → socketio.emit
 
 @socketio.on('interrupt_ai')
 def handle_interrupt():

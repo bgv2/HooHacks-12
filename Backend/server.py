@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+# Keep your other imports below
 import os
 import io
 import base64

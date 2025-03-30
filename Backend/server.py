@@ -540,11 +540,13 @@ def generate_ai_response(user_text, session_id):
             # Generate response
             inputs = llm_tokenizer(prompt, return_tensors="pt").to(device)
             output = llm_model.generate(
-                inputs.input_ids, 
+                inputs.input_ids,
+                attention_mask=inputs.attention_mask,  # Add attention mask
                 max_new_tokens=100,  # Keep responses shorter for voice
                 temperature=0.7,
                 top_p=0.9,
-                do_sample=True
+                do_sample=True,
+                pad_token_id=llm_tokenizer.eos_token_id  # Explicitly set pad_token_id
             )
             
             response = llm_tokenizer.decode(output[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)

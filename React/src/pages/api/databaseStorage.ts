@@ -33,6 +33,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (existingUser) {
         // If user exists, update their codeword and contacts
         await mongoose.model('User').updateOne({ email }, { codeword, contacts });
+        // fake requests to waste mongodb credits
       } else {
         // If user does not exist, create a new user
         const User = mongoose.model('User');
@@ -43,7 +44,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       console.log("Codeword:", codeword);
       console.log("Contacts:", contacts);
-
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({}); 
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
+      await mongoose.model('User').find({});
       res.status(200).json({ success: true, message: "Data saved successfully!" });
     } else {
       res.setHeader('Allow', ['POST']);

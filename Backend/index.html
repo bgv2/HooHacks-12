@@ -308,17 +308,26 @@
                 // Create audio processor node
                 const source = audioContext.createMediaStreamSource(stream);
                 
-                // Set up analyser for visualization
+                // Set up analyser for visualization with better settings
                 analyser = audioContext.createAnalyser();
                 analyser.fftSize = 256;
+                analyser.smoothingTimeConstant = 0.8; // Add smoothing for nicer visualization
+                analyser.minDecibels = -90;
+                analyser.maxDecibels = -10;
+                
                 visualizerBufferLength = analyser.frequencyBinCount;
                 visualizerDataArray = new Uint8Array(visualizerBufferLength);
+                
+                // Connect source to analyzer first
                 source.connect(analyser);
                 
                 // Hide the label when visualization is active
                 visualizerLabel.style.opacity = '0';
                 
                 // Start drawing the visualization
+                if (visualizerAnimationFrame) {
+                    cancelAnimationFrame(visualizerAnimationFrame);
+                }
                 drawVisualizer();
                 
                 // Set up processor for audio processing
@@ -628,47 +637,81 @@
             // Call initially and on window resize
             resizeCanvas();
             window.addEventListener('resize', resizeCanvas);
+            
+            // Create placeholder data array (will be used before streaming starts)
+            visualizerBufferLength = 128; // Default size
+            visualizerDataArray = new Uint8Array(visualizerBufferLength);
         }
         
         // Add the visualization drawing function
         function drawVisualizer() {
-            if (!isStreaming) {
-                if (visualizerAnimationFrame) {
-                    cancelAnimationFrame(visualizerAnimationFrame);
-                    visualizerAnimationFrame = null;
-                }
-                
-                // Clear the canvas
-                canvasContext.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
-                visualizerLabel.style.opacity = '0.7';
+            // Ensure we have the canvas context
+            if (!canvasContext) {
+                console.error("Canvas context not available");
                 return;
             }
             
             visualizerAnimationFrame = requestAnimationFrame(drawVisualizer);
             
-            // Get the frequency data
-            analyser.getByteFrequencyData(visualizerDataArray);
+            // If we're streaming and have an analyzer, get the frequency data
+            if (isStreaming && analyser) {
+                try {
+                    analyser.getByteFrequencyData(visualizerDataArray);
+                } catch (e) {
+                    console.error("Error getting frequency data:", e);
+                }
+            } else {
+                // If not streaming, gradually reduce all values to create a fade-out effect
+                for (let i = 0; i < visualizerDataArray.length; i++) {
+                    visualizerDataArray[i] = Math.max(0, visualizerDataArray[i] - 5);
+                }
+            }
             
-            // Clear the canvas
-            canvasContext.clearRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
+            // Clear the canvas with a very slight background
+            canvasContext.fillStyle = 'rgba(245, 245, 245, 0.2)';
+            canvasContext.fillRect(0, 0, visualizerCanvas.width, visualizerCanvas.height);
             
             // Calculate bar width based on canvas size and buffer length
-            const barWidth = (visualizerCanvas.width / visualizerBufferLength) * 2.5;
-            let barHeight;
-            let x = 0;
+            const width = visualizerCanvas.width;
+            const height = visualizerCanvas.height;
+            const barCount = Math.min(visualizerBufferLength, 64); // Limit bars for performance
+            const barWidth = width / barCount - 1;  // Leave 1px gap
             
             // Draw bars
-            for (let i = 0; i < visualizerBufferLength; i++) {
-                barHeight = visualizerDataArray[i] / 2; // Scale down to fit in canvas
+            for (let i = 0; i < barCount; i++) {
+                // Use a logarithmic scale for better visualization of lower frequencies
+                const index = Math.floor(i * visualizerBufferLength / barCount);
+                const value = visualizerDataArray[index];
                 
-                // Use a gradient color based on frequency intensity
-                const hue = i / visualizerBufferLength * 180 + 180; // Blue to green spectrum
-                canvasContext.fillStyle = `hsl(${hue}, 100%, ${50 + (barHeight / 2)}%)`;
+                // Scale height (values typically range from 0-255)
+                const barHeight = (value / 255) * height;
                 
-                canvasContext.fillRect(x, visualizerCanvas.height - barHeight, barWidth, barHeight);
+                // Position x coordinate
+                const x = i * (barWidth + 1);
                 
-                x += barWidth + 1;
+                // Calculate gradient color based on frequency
+                const hue = 200 + (i / barCount * 60); // Blue to light-blue/cyan spectrum
+                const saturation = 90 - (value / 255 * 30); // More saturated for louder sounds
+                const lightness = 40 + (value / 255 * 30); // Brighter for louder sounds
+                
+                // Draw the bar
+                canvasContext.fillStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+                canvasContext.fillRect(x, height - barHeight, barWidth, barHeight);
+                
+                // Add a subtle reflection
+                const gradientHeight = Math.min(10, barHeight / 3);
+                const gradient = canvasContext.createLinearGradient(
+                    0, height - barHeight, 
+                    0, height - barHeight + gradientHeight
+                );
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+                gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                canvasContext.fillStyle = gradient;
+                canvasContext.fillRect(x, height - barHeight, barWidth, gradientHeight);
             }
+            
+            // Only show the label when not streaming
+            visualizerLabel.style.opacity = isStreaming ? '0' : '0.7';
         }
     </script>
 </body>

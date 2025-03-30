@@ -11,15 +11,15 @@ function CallPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null); // Reference for the MediaRecorder instance
   const audioChunks = useRef<Blob[]>([]); // Array to store audio data chunks
  
-  /*
-    React.useEffect(() => {
-      const interval = setInterval(() => {
-        setCallDuration((prev) => prev + 1);
-      }, 1000);
   
-      return () => clearInterval(interval);
-    }, []);
-  */
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setCallDuration((prev) => prev + 1);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+  
 
   // Start recording
   const startRecording = async () => {

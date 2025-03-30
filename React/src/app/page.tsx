@@ -1,8 +1,14 @@
 "use client";
 import { useState } from "react";
 import { auth0 } from "../lib/auth0";
+import { NextApiRequest, NextApiResponse } from "next";
+
+
+
 
 export default async function Home() {
+
+	
 	const [contacts, setContacts] = useState<string[]>([]);
 	const [codeword, setCodeword] = useState("");
 

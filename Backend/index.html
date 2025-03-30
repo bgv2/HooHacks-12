@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSM Voice Chat</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Socket.IO client library -->
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #4c84ff;
+            --secondary-color: #3367d6;
+            --text-color: #333;
+            --background-color: #f9f9f9;
+            --card-background: #ffffff;
+            --accent-color: #ff5252;
+            --success-color: #4CAF50;
+            --border-color: #e0e0e0;
+            --shadow-color: rgba(0, 0, 0, 0.1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            transition: all 0.3s ease;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            color: var(--primary-color);
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-weight: 300;
+        }
+
+        .app-container {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+        }
+
+        @media (min-width: 768px) {
+            .app-container {
+                grid-template-columns: 2fr 1fr;
+            }
+        }
+
+        .chat-container, .control-panel {
+            background-color: var(--card-background);
+            border-radius: 12px;
+            box-shadow: 0 4px 12px var(--shadow-color);
+            padding: 20px;
+        }
+
+        .control-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .conversation {
+            height: 400px;
+            overflow-y: auto;
+            padding: 10px;
+            border-radius: 8px;
+            background-color: #f7f9fc;
+            margin-bottom: 20px;
+            scroll-behavior: smooth;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 12px 15px;
+            border-radius: 12px;
+            max-width: 85%;
+            position: relative;
+            animation: fade-in 0.3s ease-out forwards;
+        }
+
+        @keyframes fade-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .user {
+            background-color: #e3f2fd;
+            color: #0d47a1;
+            margin-left: auto;
+            border-bottom-right-radius: 4px;
+        }
+
+        .ai {
+            background-color: #f1f1f1;
+            color: #37474f;
+            margin-right: auto;
+            border-bottom-left-radius: 4px;
+        }
+
+        .system {
+            background-color: #f8f9fa;
+            font-style: italic;
+            color: #666;
+            text-align: center;
+            max-width: 90%;
+            margin: 10px auto;
+            font-size: 0.9em;
+            padding: 8px 12px;
+            border-radius: 8px;
+        }
+
+        .audio-player {
+            width: 100%;
+            margin-top: 8px;
+            border-radius: 8px;
+        }
+
+        button {
+            padding: 12px 20px;
+            border-radius: 8px;
+            border: none;
+            background-color: var(--primary-color);
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            flex: 1;
+        }
+
+        button:hover {
+            background-color: var(--secondary-color);
+        }
+
+        button.recording {
+            background-color: var(--accent-color);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9em;
+            color: #555;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #ccc;
+        }
+
+        .status-dot.active {
+            background-color: var(--success-color);
+        }
+
+        footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 0.8em;
+            color: #777;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>CSM Voice Chat</h1>
+        <p class="subtitle">Talk naturally with the AI using your voice</p>
+    </header>
+
+    <div class="app-container">
+        <div class="chat-container">
+            <div class="chat-header">
+                <h2>Conversation</h2>
+                <div class="status-indicator">
+                    <div id="statusDot" class="status-dot"></div>
+                    <span id="statusText">Disconnected</span>
+                </div>
+            </div>
+            <div id="conversation" class="conversation"></div>
+        </div>
+
+        <div class="control-panel">
+            <div>
+                <h3>Controls</h3>
+                <p>Click the button below to start and stop recording.</p>
+                <div class="button-row">
+                    <button id="streamButton">
+                        <i class="fas fa-microphone"></i>
+                        Start Conversation
+                    </button>
+                    <button id="clearButton">
+                        <i class="fas fa-trash"></i>
+                        Clear
+                    </button>
+                </div>
+            </div>
+            
+            <div class="settings-panel">
+                <h3>Settings</h3>
+                <div class="settings-toggles">
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="autoPlayResponses" checked>
+                        <label for="autoPlayResponses">Autoplay Responses</label>
+                    </div>
+                    <div>
+                        <label for="speakerSelect">Speaker Voice:</label>
+                        <select id="speakerSelect">
+                            <option value="0">Speaker 0 (You)</option>
+                            <option value="1">Speaker 1 (AI)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>Powered by CSM 1B & Llama 3.2 | Whisper for speech recognition</p>
+    </footer>
+
+    <script>
+        // Configuration constants
+        const SERVER_URL = window.location.hostname === 'localhost' ? 
+            'http://localhost:5000' : window.location.origin;
+        const ENERGY_WINDOW_SIZE = 15;
+        const CLIENT_SILENCE_DURATION_MS = 750;
+
+        // DOM elements
+        const elements = {
+            conversation: document.getElementById('conversation'),
+            streamButton: document.getElementById('streamButton'),
+            clearButton: document.getElementById('clearButton'),
+            statusDot: document.getElementById('statusDot'),
+            statusText: document.getElementById('statusText'),
+            speakerSelection: document.getElementById('speakerSelect'),
+            autoPlayResponses: document.getElementById('autoPlayResponses')
+        };
+
+        // Application state
+        const state = {
+            socket: null,
+            audioContext: null,
+            analyser: null,
+            microphone: null,
+            streamProcessor: null,
+            isStreaming: false,
+            isSpeaking: false,
+            silenceThreshold: 0.01,
+            energyWindow: [],
+            silenceTimer: null,
+            currentSpeaker: 0
+        };
+
+        // Initialize the application
+        function initializeApp() {
+            // Initialize socket.io connection
+            setupSocketConnection();
+            
+            // Setup event listeners
+            setupEventListeners();
+            
+            // Show welcome message
+            addSystemMessage('Welcome to CSM Voice Chat! Click "Start Conversation" to begin.');
+        }
+
+        // Setup Socket.IO connection
+        function setupSocketConnection() {
+            state.socket = io(SERVER_URL);
+            
+            // Connection events
+            state.socket.on('connect', () => {
+                updateConnectionStatus(true);
+                addSystemMessage('Connected to server.');
+            });
+            
+            state.socket.on('disconnect', () => {
+                updateConnectionStatus(false);
+                addSystemMessage('Disconnected from server.');
+                stopStreaming(false);
+            });
+            
+            state.socket.on('error', (data) => {
+                addSystemMessage(`Error: ${data.message}`);
+                console.error('Server error:', data.message);
+            });
+            
+            // Register message handlers
+            state.socket.on('transcription', handleTranscription);
+            state.socket.on('context_updated', handleContextUpdate);
+            state.socket.on('streaming_status', handleStreamingStatus);
+            state.socket.on('processing_status', handleProcessingStatus);
+            
+            // Handlers for incremental audio streaming
+            state.socket.on('audio_response_start', handleAudioResponseStart);
+            state.socket.on('audio_response_chunk', handleAudioResponseChunk);
+            state.socket.on('audio_response_complete', handleAudioResponseComplete);
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            // Stream button
+            elements.streamButton.addEventListener('click', toggleStreaming);
+            
+            // Clear button
+            elements.clearButton.addEventListener('click', clearConversation);
+            
+            // Speaker selection
+            elements.speakerSelection.addEventListener('change', () => {
+                state.currentSpeaker = parseInt(elements.speakerSelection.value);
+            });
+        }
+
+        // Update connection status UI
+        function updateConnectionStatus(isConnected) {
+            if (isConnected) {
+                elements.statusDot.classList.add('active');
+                elements.statusText.textContent = 'Connected';
+            } else {
+                elements.statusDot.classList.remove('active');
+                elements.statusText.textContent = 'Disconnected';
+            }
+        }
+
+        // Toggle streaming state
+        function toggleStreaming() {
+            if (state.isStreaming) {
+                stopStreaming();
+            } else {
+                startStreaming();
+            }
+        }
+
+        // Start streaming audio to the server
+        function startStreaming() {
+            if (!state.socket || !state.socket.connected) {
+                addSystemMessage('Not connected to server. Please refresh the page.');
+                return;
+            }
+            
+            // Request microphone access
+            navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+                .then(stream => {
+                    state.isStreaming = true;
+                    elements.streamButton.classList.add('recording');
+                    elements.streamButton.innerHTML = '<i class="fas fa-stop"></i> Stop Recording';
+                    
+                    // Initialize Web Audio API
+                    state.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                    state.microphone = state.audioContext.createMediaStreamSource(stream);
+                    state.analyser = state.audioContext.createAnalyser();
+                    state.analyser.fftSize = 1024;
+                    
+                    state.microphone.connect(state.analyser);
+                    
+                    // Create processor node for audio data
+                    const processorNode = state.audioContext.createScriptProcessor(4096, 1, 1);
+                    processorNode.onaudioprocess = handleAudioProcess;
+                    state.analyser.connect(processorNode);
+                    processorNode.connect(state.audioContext.destination);
+                    state.streamProcessor = processorNode;
+                    
+                    state.silenceTimer = null;
+                    state.energyWindow = [];
+                    state.isSpeaking = false;
+                    
+                    // Notify server
+                    state.socket.emit('start_stream');
+                    addSystemMessage('Recording started. Speak now...');
+                })
+                .catch(error => {
+                    console.error('Error accessing microphone:', error);
+                    addSystemMessage('Could not access microphone. Please check permissions.');
+                });
+        }
+
+        // Stop streaming audio
+        function stopStreaming(notifyServer = true) {
+            if (state.isStreaming) {
+                state.isStreaming = false;
+                elements.streamButton.classList.remove('recording');
+                elements.streamButton.innerHTML = '<i class="fas fa-microphone"></i> Start Conversation';
+                
+                // Clean up audio resources
+                if (state.streamProcessor) {
+                    state.streamProcessor.disconnect();
+                    state.streamProcessor = null;
+                }
+                
+                if (state.analyser) {
+                    state.analyser.disconnect();
+                    state.analyser = null;
+                }
+                
+                if (state.microphone) {
+                    state.microphone.disconnect();
+                    state.microphone = null;
+                }
+                
+                if (state.audioContext) {
+                    state.audioContext.close();
+                    state.audioContext = null;
+                }
+                
+                // Clear any pending silence timer
+                if (state.silenceTimer) {
+                    clearTimeout(state.silenceTimer);
+                    state.silenceTimer = null;
+                }
+                
+                // Notify server if needed
+                if (notifyServer && state.socket && state.socket.connected) {
+                    state.socket.emit('stop_stream');
+                }
+                
+                addSystemMessage('Recording stopped.');
+            }
+        }
+
+        // Handle audio processing
+        function handleAudioProcess(event) {
+            if (!state.isStreaming) return;
+            
+            const inputData = event.inputBuffer.getChannelData(0);
+            const energy = calculateAudioEnergy(inputData);
+            updateEnergyWindow(energy);
+            
+            const averageEnergy = calculateAverageEnergy();
+            const isSilent = averageEnergy < state.silenceThreshold;
+            
+            handleSpeechState(isSilent);
+        }
+
+        // Calculate audio energy (volume)
+        function calculateAudioEnergy(buffer) {
+            let sum = 0;
+            for (let i = 0; i < buffer.length; i++) {
+                sum += buffer[i] * buffer[i];
+            }
+            return Math.sqrt(sum / buffer.length);
+        }
+
+        // Update energy window for averaging
+        function updateEnergyWindow(energy) {
+            state.energyWindow.push(energy);
+            if (state.energyWindow.length > ENERGY_WINDOW_SIZE) {
+                state.energyWindow.shift();
+            }
+        }
+
+        // Calculate average energy from window
+        function calculateAverageEnergy() {
+            if (state.energyWindow.length === 0) return 0;
+            
+            const sum = state.energyWindow.reduce((acc, val) => acc + val, 0);
+            return sum / state.energyWindow.length;
+        }
+
+        // Handle speech/silence state transitions
+        function handleSpeechState(isSilent) {
+            if (state.isSpeaking) {
+                if (isSilent) {
+                    // User was speaking but now is silent
+                    if (!state.silenceTimer) {
+                        state.silenceTimer = setTimeout(() => {
+                            // Silence lasted long enough, consider speech done
+                            if (state.isSpeaking) {
+                                state.isSpeaking = false;
+                                
+                                // Get the current audio data and send it
+                                const audioBuffer = new Float32Array(state.audioContext.sampleRate * 5); // 5 seconds max
+                                state.analyser.getFloatTimeDomainData(audioBuffer);
+                                
+                                // Create WAV blob
+                                const wavBlob = createWavBlob(audioBuffer, state.audioContext.sampleRate);
+                                
+                                // Convert to base64
+                                const reader = new FileReader();
+                                reader.onloadend = function() {
+                                    sendAudioChunk(reader.result, state.currentSpeaker);
+                                };
+                                reader.readAsDataURL(wavBlob);
+                                
+                                addSystemMessage('Processing your message...');
+                            }
+                        }, CLIENT_SILENCE_DURATION_MS);
+                    }
+                } else {
+                    // User is still speaking, reset silence timer
+                    if (state.silenceTimer) {
+                        clearTimeout(state.silenceTimer);
+                        state.silenceTimer = null;
+                    }
+                }
+            } else {
+                if (!isSilent) {
+                    // User started speaking
+                    state.isSpeaking = true;
+                    if (state.silenceTimer) {
+                        clearTimeout(state.silenceTimer);
+                        state.silenceTimer = null;
+                    }
+                }
+            }
+        }
+
+        // Send audio chunk to server
+        function sendAudioChunk(audioData, speaker) {
+            if (state.socket && state.socket.connected) {
+                state.socket.emit('audio_chunk', {
+                    audio: audioData,
+                    speaker: speaker
+                });
+            }
+        }
+
+        // Create WAV blob from audio data
+        function createWavBlob(audioData, sampleRate) {
+            const numChannels = 1;
+            const bitsPerSample = 16;
+            const bytesPerSample = bitsPerSample / 8;
+            
+            // Create buffer for WAV file
+            const buffer = new ArrayBuffer(44 + audioData.length * bytesPerSample);
+            const view = new DataView(buffer);
+            
+            // Write WAV header
+            // "RIFF" chunk descriptor
+            writeString(view, 0, 'RIFF');
+            view.setUint32(4, 36 + audioData.length * bytesPerSample, true);
+            writeString(view, 8, 'WAVE');
+            
+            // "fmt " sub-chunk
+            writeString(view, 12, 'fmt ');
+            view.setUint32(16, 16, true); // subchunk1size
+            view.setUint16(20, 1, true); // audio format (PCM)
+            view.setUint16(22, numChannels, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * numChannels * bytesPerSample, true); // byte rate
+            view.setUint16(32, numChannels * bytesPerSample, true); // block align
+            view.setUint16(34, bitsPerSample, true);
+            
+            // "data" sub-chunk
+            writeString(view, 36, 'data');
+            view.setUint32(40, audioData.length * bytesPerSample, true);
+            
+            // Write audio data
+            const audioDataStart = 44;
+            for (let i = 0; i < audioData.length; i++) {
+                const sample = Math.max(-1, Math.min(1, audioData[i]));
+                const value = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                view.setInt16(audioDataStart + i * bytesPerSample, value, true);
+            }
+            
+            return new Blob([buffer], { type: 'audio/wav' });
+        }
+
+        // Helper function to write strings to DataView
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+
+        // Clear conversation history
+        function clearConversation() {
+            elements.conversation.innerHTML = '';
+            if (state.socket && state.socket.connected) {
+                state.socket.emit('clear_context');
+            }
+            addSystemMessage('Conversation cleared.');
+        }
+
+        // Handle transcription response from server
+        function handleTranscription(data) {
+            const speaker = data.speaker === 0 ? 'user' : 'ai';
+            addMessage(data.text, speaker);
+        }
+
+        // Handle context update from server
+        function handleContextUpdate(data) {
+            if (data.status === 'cleared') {
+                elements.conversation.innerHTML = '';
+                addSystemMessage('Conversation context cleared.');
+            }
+        }
+
+        // Handle streaming status updates from server
+        function handleStreamingStatus(data) {
+            if (data.status === 'active') {
+                console.log('Server acknowledged streaming is active');
+            } else if (data.status === 'inactive') {
+                console.log('Server acknowledged streaming is inactive');
+            }
+        }
+
+        // Handle processing status updates
+        function handleProcessingStatus(data) {
+            switch (data.status) {
+                case 'transcribing':
+                    addSystemMessage('Transcribing your message...');
+                    break;
+                case 'generating':
+                    addSystemMessage('Generating response...');
+                    break;
+                case 'synthesizing':
+                    addSystemMessage('Synthesizing voice...');
+                    break;
+            }
+        }
+
+        // Handle the start of an audio streaming response
+        function handleAudioResponseStart(data) {
+            // Prepare for receiving chunked audio
+            console.log(`Expecting ${data.total_chunks} audio chunks`);
+        }
+
+        // Handle an incoming audio chunk
+        function handleAudioResponseChunk(data) {
+            // Create audio element for the response
+            const audioElement = document.createElement('audio');
+            if (elements.autoPlayResponses.checked) {
+                audioElement.autoplay = true;
+            }
+            audioElement.controls = true;
+            audioElement.className = 'audio-player';
+            audioElement.src = data.chunk;
+            
+            // Add to the most recent AI message if it exists
+            const messages = elements.conversation.querySelectorAll('.message.ai');
+            if (messages.length > 0) {
+                const lastAiMessage = messages[messages.length - 1];
+                lastAiMessage.appendChild(audioElement);
+            }
+        }
+
+        // Handle completion of audio streaming
+        function handleAudioResponseComplete(data) {
+            // Update the AI message with the full text
+            addMessage(data.text, 'ai');
+        }
+
+        // Add a message to the conversation
+        function addMessage(text, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            messageDiv.textContent = text;
+            
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'message-time';
+            const now = new Date();
+            timeSpan.textContent = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+            messageDiv.appendChild(timeSpan);
+            
+            elements.conversation.appendChild(messageDiv);
+            elements.conversation.scrollTop = elements.conversation.scrollHeight;
+        }
+
+        // Add a system message to the conversation
+        function addSystemMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message system';
+            messageDiv.textContent = message;
+            elements.conversation.appendChild(messageDiv);
+            elements.conversation.scrollTop = elements.conversation.scrollHeight;
+        }
+
+        // Initialize the application when DOM is fully loaded
+        document.addEventListener('DOMContentLoaded', initializeApp);
+    </script>
+</body>
+</html>

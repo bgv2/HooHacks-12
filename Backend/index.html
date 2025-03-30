@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Voice Assistant with CSM</title>
+    <title>Real-Time Voice Assistant</title>
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
     <style>
         body {
@@ -89,33 +89,39 @@
             transition: all 0.3s ease;
         }
         
-        #talkButton {
+        #micButton {
             background-color: #4CAF50;
             color: white;
             width: 200px;
             box-shadow: 0 4px 8px rgba(76, 175, 80, 0.3);
         }
         
-        #talkButton:hover {
+        #micButton:hover {
             background-color: #45a049;
             transform: translateY(-2px);
         }
         
-        #talkButton.recording {
-            background-color: #f44336;
+        #micButton.listening {
+            background-color: #4CAF50;
+            box-shadow: 0 0 0 rgba(76, 175, 80, 0.4);
             animation: pulse 1.5s infinite;
-            box-shadow: 0 4px 8px rgba(244, 67, 54, 0.3);
+        }
+        
+        #micButton.speaking {
+            background-color: #f44336;
+            box-shadow: 0 0 0 rgba(244, 67, 54, 0.4);
+            animation: pulse 1.5s infinite;
         }
         
         @keyframes pulse {
             0% {
-                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.4);
             }
-            50% {
-                transform: scale(1.05);
+            70% {
+                box-shadow: 0 0 0 15px rgba(76, 175, 80, 0);
             }
             100% {
-                transform: scale(1);
+                box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
             }
         }
         
@@ -126,43 +132,22 @@
             color: #657786;
         }
         
-        .hidden {
-            display: none;
-        }
-        
-        .transcription-info {
-            font-size: 0.8em;
-            color: #888;
-            margin-top: 4px;
-            text-align: right;
-        }
-        
-        .text-only-indicator {
-            font-size: 0.8em;
-            color: #e74c3c;
-            margin-top: 4px;
-            font-style: italic;
-        }
-        
-        .status-message {
-            text-align: center;
-            padding: 8px;
-            margin: 10px 0;
-            background-color: #f8f9fa;
-            border-radius: 5px;
-            color: #666;
-            font-size: 0.9em;
-        }
-        
-        /* Audio visualizer styles */
         .visualizer-container {
             width: 100%;
-            height: 120px;
+            height: 100px;
             margin: 15px 0;
             border-radius: 10px;
             overflow: hidden;
-            background-color: #000;
+            background-color: #1a1a1a;
             position: relative;
+        }
+        
+        .visualizer-container.user {
+            border: 2px solid #4CAF50;
+        }
+        
+        .visualizer-container.ai {
+            border: 2px solid #2196F3;
         }
         
         #visualizer {
@@ -176,122 +161,59 @@
             top: 10px;
             left: 10px;
             color: white;
-            font-size: 0.8em;
+            font-size: 0.9em;
             background-color: rgba(0, 0, 0, 0.5);
             padding: 4px 8px;
             border-radius: 4px;
         }
         
-        /* Real-time transcription */
-        .live-transcription {
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            right: 10px;
-            color: white;
-            font-size: 0.9em;
-            background-color: rgba(0, 0, 0, 0.5);
-            padding: 8px;
-            border-radius: 4px;
-            text-align: center;
-            max-height: 60px;
-            overflow-y: auto;
-            font-style: italic;
-        }
-        
-        /* Wave animation for active speaker */
-        .speaking-wave {
+        .speech-indicator {
             display: inline-block;
-            margin-left: 5px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
             vertical-align: middle;
         }
         
-        .speaking-wave span {
-            display: inline-block;
-            width: 3px;
-            height: 12px;
-            margin: 0 1px;
-            background-color: currentColor;
-            border-radius: 1px;
-            animation: speakingWave 1s infinite ease-in-out;
-        }
-        
-        .speaking-wave span:nth-child(2) {
-            animation-delay: 0.1s;
-        }
-        
-        .speaking-wave span:nth-child(3) {
-            animation-delay: 0.2s;
-        }
-        
-        .speaking-wave span:nth-child(4) {
-            animation-delay: 0.3s;
-        }
-        
-        @keyframes speakingWave {
-            0%, 100% {
-                height: 4px;
-            }
-            50% {
-                height: 12px;
-            }
-        }
-        
-        /* Modern switch for visualizer toggle */
-        .switch-container {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 10px;
-        }
-        
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 50px;
-            height: 24px;
-            margin-left: 10px;
-        }
-        
-        .switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-        
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #ccc;
-            transition: .4s;
-            border-radius: 24px;
-        }
-        
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 16px;
-            width: 16px;
-            left: 4px;
-            bottom: 4px;
-            background-color: white;
-            transition: .4s;
-            border-radius: 50%;
-        }
-        
-        input:checked + .slider {
+        .user-speaking {
             background-color: #4CAF50;
+            animation: blink 1s infinite;
         }
         
-        input:checked + .slider:before {
-            transform: translateX(26px);
+        .ai-speaking {
+            background-color: #2196F3;
+            animation: blink 1s infinite;
         }
         
-        /* Toast notification for feedback */
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        
+        .connection-status {
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            margin-top: 10px;
+            text-align: center;
+        }
+        
+        .connection-status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .connection-status.connecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        
+        .connection-status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
         .toast {
             position: fixed;
             bottom: 20px;
@@ -328,38 +250,27 @@
     </style>
 </head>
 <body>
-    <h1>Live Voice Assistant with CSM</h1>
+    <h1>Real-Time Voice Assistant</h1>
     <div id="conversation"></div>
     
-    <div class="switch-container">
-        <span>Audio Visualizer</span>
-        <label class="switch">
-            <input type="checkbox" id="visualizerToggle" checked>
-            <span class="slider"></span>
-        </label>
-    </div>
-    
-    <div class="visualizer-container" id="visualizerContainer">
+    <div class="visualizer-container user" id="visualizerContainer">
         <canvas id="visualizer"></canvas>
         <div class="visualizer-label" id="visualizerLabel">Listening...</div>
-        <div class="live-transcription" id="liveTranscription"></div>
     </div>
     
     <div id="controls">
-        <button id="talkButton">Press to Talk</button>
+        <button id="micButton">Press to Talk</button>
     </div>
     
     <div id="status">Connecting to server...</div>
 
     <script>
         const socket = io();
-        const talkButton = document.getElementById('talkButton');
+        const micButton = document.getElementById('micButton');
         const conversation = document.getElementById('conversation');
         const status = document.getElementById('status');
-        const visualizerToggle = document.getElementById('visualizerToggle');
         const visualizerContainer = document.getElementById('visualizerContainer');
         const visualizerLabel = document.getElementById('visualizerLabel');
-        const liveTranscription = document.getElementById('liveTranscription');
         const canvas = document.getElementById('visualizer');
         const canvasCtx = canvas.getContext('2d');
         
@@ -385,19 +296,6 @@
             canvas.width = visualizerContainer.offsetWidth;
             canvas.height = visualizerContainer.offsetHeight;
         }
-        
-        // Handle visualizer toggle
-        visualizerToggle.addEventListener('change', function() {
-            visualizerActive = this.checked;
-            visualizerContainer.style.display = visualizerActive ? 'block' : 'none';
-            
-            if (!visualizerActive && visualizerAnimationId) {
-                cancelAnimationFrame(visualizerAnimationId);
-                visualizerAnimationId = null;
-            } else if (visualizerActive && audioAnalyser) {
-                drawVisualizer();
-            }
-        });
         
         // Connect to server
         socket.on('connect', () => {
@@ -491,8 +389,8 @@
                     setupScriptProcessor(stream);
                 }
                 
-                // Setup talk button
-                talkButton.addEventListener('click', toggleTalking);
+                // Setup mic button
+                micButton.addEventListener('click', toggleTalking);
                 
                 // Setup keyboard shortcuts
                 document.addEventListener('keydown', (e) => {
@@ -618,8 +516,8 @@
             if (!sessionActive || isAITalking) return;
             
             isStreaming = true;
-            talkButton.classList.add('recording');
-            talkButton.textContent = 'Release to Stop';
+            micButton.classList.add('listening');
+            micButton.textContent = 'Release to Stop';
             status.textContent = 'Listening...';
             visualizerLabel.textContent = 'You are speaking...';
             
@@ -630,10 +528,6 @@
             
             // Tell server we're starting to speak
             socket.emit('start_speaking');
-            
-            // Clear previous transcriptions
-            liveTranscription.textContent = '';
-            liveTranscription.classList.remove('hidden');
         }
         
         // Stop talking to the assistant
@@ -641,15 +535,12 @@
             if (!isStreaming) return;
             
             isStreaming = false;
-            talkButton.classList.remove('recording');
-            talkButton.textContent = 'Press to Talk';
+            micButton.classList.remove('listening');
+            micButton.textContent = 'Press to Talk';
             status.textContent = 'Processing...';
             
             // Tell server we're done speaking
             socket.emit('stop_speaking');
-            
-            // Hide live transcription temporarily
-            liveTranscription.classList.add('hidden');
         }
         
         // Send audio chunk to server
@@ -702,8 +593,7 @@
         
         // Handle real-time transcription
         socket.on('live_transcription', (data) => {
-            liveTranscription.textContent = data.text || '...';
-            liveTranscription.classList.remove('hidden');
+            visualizerLabel.textContent = data.text || '...';
         });
         
         // Handle final transcription
@@ -749,8 +639,8 @@
                 speakingWave.remove();
             }
             
-            // Re-enable talk button if it was disabled
-            talkButton.disabled = false;
+            // Re-enable mic button if it was disabled
+            micButton.disabled = false;
         });
         
         // Legacy handler for text-only responses
